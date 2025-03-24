@@ -20,6 +20,7 @@
       background: #000;
       cursor: pointer;
     }
+    /* Видео остаётся зеркальным, если включён режим */
     #video {
       position: absolute;
       top: 0;
@@ -29,6 +30,7 @@
       object-fit: cover;
       transform: scaleX(-1);
     }
+    /* Оверлеи НЕ имеют зеркального эффекта, чтобы подписи читались правильно */
     canvas {
       position: absolute;
       top: 0;
@@ -37,6 +39,7 @@
       height: 100%;
       object-fit: cover;
     }
+    /* Информационный блок удалён */
     #controls {
       position: absolute;
       bottom: 10px;
@@ -62,6 +65,7 @@
       width: 200% !important;
       transform: translateX(-25%) scaleX(0.5);
     }
+    
     #container.ar-mode.mirror #video,
     #container.ar-mode.mirror canvas {
       transform: translateX(-25%) scaleX(-0.5);
@@ -80,14 +84,18 @@
       <button id="arBtn">AR</button>
     </div>
   </div>
+
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
   <script defer src="https://unpkg.com/face-api.js@0.22.2/dist/face-api.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+
   <script>
-    const useOnlineTranslation = false;
+    // Если хотите получать перевод онлайн, установите эту переменную в true.
+    const useOnlineTranslation = false; // По умолчанию используется статический словарь
+
     async function translateLabel(word) {
       try {
         const response = await fetch("https://libretranslate.de/translate", {
@@ -107,10 +115,8 @@
         return word;
       }
     }
-    const labelTranslations = { /* ... (оставлено без изменений) */ };
-    const dangerousObjects = ['knife', 'pistol', 'scissors'];
-    const foodObjects = ['apple', 'banana', 'pizza', 'orange', 'sandwich'];
-    const emotionTranslations = { /* ... (оставлено без изменений) */ };
+
+    // Элементы интерфейса
     const video = document.getElementById('video');
     const overlayCanvas = document.getElementById('overlay');
     const overlayCtx = overlayCanvas.getContext('2d');
@@ -119,44 +125,891 @@
     const fullscreenBtn = document.getElementById('fullscreenBtn');
     const switchCameraBtn = document.getElementById('switchCameraBtn');
     const toggleMirrorBtn = document.getElementById('toggleMirrorBtn');
-    const arBtn = document.getElementById('arBtn');
     const container = document.getElementById('container');
-    let currentFacingMode = "user";
+    const arBtn = document.getElementById('arBtn'); // Добавлена кнопка AR
+
+    // Глобальные переменные
+    let currentFacingMode = "user"; // "user" или "environment"
     let stream = null;
-    let mirrorMode = true;
-    let lastHandBox = null;
+    let mirrorMode = true; // видео зеркальное, но отрисовка корректируется
+    let lastHandBox = null; // ограничивающий прямоугольник руки
+    let arMode = false; // Добавлена переменная для AR режима
+
+    // Переменные для жестов рук
     let fistCount = 0;
     let gestureActive = false;
     let lastFistState = false;
     let lastTimeFist = 0;
-    let lastDrawPoint = null;
-    let arMode = false;
-    
-    // Инициализация камеры
-    async function initCamera(facingMode = "user") {
-      if (stream) stream.getTracks().forEach(track => track.stop());
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { exact: facingMode } },
-          audio: false
-        });
-      } catch (error) {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode },
-          audio: false
-        });
-      }
-      video.srcObject = stream;
-      video.onloadedmetadata = () => {
-        video.play();
-        resizeCanvases();
+    let lastDrawPoint = null; // для рисования линии
+
+    // Статический словарь перевода предметов – все слова, предоставленные вами
+    const labelTranslations = {
+      // COCO-SSD (80 классов)
+      "person": "человек",
+      "bicycle": "велосипед",
+      "car": "машина",
+      "motorcycle": "мотоцикл",
+      "airplane": "самолёт",
+      "bus": "автобус",
+      "train": "поезд",
+      "truck": "грузовик",
+      "boat": "лодка",
+      "traffic light": "светофор",
+      "fire hydrant": "гидрант",
+      "stop sign": "знак стоп",
+      "parking meter": "паркомат",
+      "bench": "скамейка",
+      // Дом и мебель:
+      "table": "Стол",
+      "chair": "Стул",
+      "bed": "Кровать",
+      "sofa": "Диван",
+      "wardrobe": "Шкаф для одежды",
+      "bookcase": "Книжный шкаф",
+      "nightstand": "Прикроватная тумбочка",
+      "dresser": "Комод",
+      "mirror": "Зеркало",
+      "table lamp": "Лампа настольная",
+      "floor lamp": "Лампа напольная",
+      "chandelier": "Люстра",
+      "torchiere": "Торшер",
+      "carpet": "Ковер",
+      "rug": "Палас",
+      "curtains": "Занавески",
+      "drapes": "Шторы",
+      "blinds": "Жалюзи",
+      "sofa pillow": "Подушка диванная",
+      "sleep pillow": "Подушка для сна",
+      "blanket": "Одеяло",
+      "plaid": "Плед",
+      "bedspread": "Покрывало",
+      "sheet": "Простыня",
+      "duvet cover": "Пододеяльник",
+      "pillowcase": "Наволочка",
+      "mattress": "Матрас",
+      "folding bed": "Раскладушка",
+      "armchair": "Кресло",
+      "ottoman": "Пуф",
+      "bench (furniture)": "Банкетка",
+      "coffee table": "Журнальный столик",
+      "dining table": "Обеденный стол",
+      "kitchen table": "Кухонный стол",
+      "bar stool": "Барный стул",
+      "stool": "Табурет",
+      "floor rack": "Вешалка напольная",
+      "wall rack": "Вешалка настенная",
+      "hooks": "Плечики",
+      "ironing board": "Гладильная доска",
+      "clothes dryer": "Сушилка для белья",
+      "laundry basket": "Корзина для белья",
+      "trash can": "Урна для мусора",
+      "vase": "Ваза для цветов",
+      "painting": "Картина",
+      "framed photo": "Фотография в рамке",
+      "wall clock": "Настенные часы",
+      "desk clock": "Настольные часы",
+      "alarm clock": "Будильник",
+      "figurine": "Статуэтка",
+      "candle": "Свеча",
+      "candelabra": "Подсвечник",
+      "photo frame": "Рамка для фотографий",
+      "wall shelf": "Полка настенная",
+      "floor shelf": "Полка напольная",
+      "rack": "Стеллаж",
+      "tv stand": "Тумба под телевизор",
+      "home theater": "Домашний кинотеатр",
+      "sound system": "Акустическая система",
+      "music center": "Музыкальный центр",
+      // Кухня:
+      "refrigerator": "Холодильник",
+      "stove": "Плита",
+      "oven": "Духовка",
+      "microwave": "Микроволновая печь",
+      "dishwasher": "Посудомоечная машина",
+      "sink (kitchen)": "Раковина",
+      "faucet": "Кран",
+      "cutting board": "Разделочная доска",
+      "kitchen knife": "Нож",
+      "fork (kitchen)": "Вилка",
+      "spoon (kitchen)": "Ложка",
+      "plate": "Тарелка",
+      "cup": "Чашка",
+      "glass": "Стакан",
+      "pot": "Кастрюля",
+      "pan": "Сковорода",
+      "kettle": "Чайник",
+      "toaster": "Тостер",
+      "blender": "Блендер",
+      "mixer": "Миксер",
+      "coffee maker": "Кофеварка",
+      "food container": "Контейнер для еды",
+      "napkins": "Салфетки",
+      "tablecloth": "Скатерть",
+      // Ванная комната:
+      "bathtub": "Ванна",
+      "shower": "Душ",
+      "sink (bathroom)": "Раковина",
+      "toilet": "Туалет",
+      "mirror (bathroom)": "Зеркало",
+      "towel": "Полотенце",
+      "soap": "Мыло",
+      "shampoo": "Шампунь",
+      "shower gel": "Гель для душа",
+      "toothbrush": "Зубная щётка",
+      "toothpaste": "Зубная паста",
+      // Электроника:
+      "telephone": "Телефон",
+      "computer": "Компьютер",
+      "laptop": "Ноутбук",
+      "tablet": "Планшет",
+      "tv": "Телевизор",
+      "headphones": "Наушники",
+      "speakers": "Колонки",
+      "remote": "Пульт дистанционного управления",
+      "charger": "Зарядное устройство",
+      "flash drive": "Флешка",
+      "hard drive": "Жесткий диск",
+      "printer": "Принтер",
+      "scanner": "Сканер",
+      "camera": "Камера",
+      "webcam": "Веб-камера",
+      "microphone": "Микрофон",
+      "keyboard": "Клавиатура",
+      "mouse": "Мышь",
+      "router": "Роутер",
+      "modem": "Модем",
+      // Одежда и аксессуары:
+      "shirt": "Рубашка",
+      "blouse": "Блузка",
+      "t-shirt": "Футболка",
+      "tank top": "Майка",
+      "top": "Топ",
+      "polo": "Поло",
+      "long sleeve": "Лонгслив",
+      "sweatshirt": "Свитшот",
+      "hoodie": "Худи",
+      "heavy sweatshirt": "Толстовка",
+      "jumper": "Джемпер",
+      "pullover": "Пуловер",
+      "cardigan": "Кардиган",
+      "vest": "Жилет",
+      "jacket": "Пиджак",
+      "suit": "Костюм",
+      "tailcoat": "Фрак",
+      "tuxedo": "Смокинг",
+      "dress": "Платье",
+      "sundress": "Сарафан",
+      "skirt": "Юбка",
+      "trousers": "Брюки",
+      "jeans": "Джинсы",
+      "shorts": "Шорты",
+      "capri": "Капри",
+      "leggings": "Леггинсы",
+      "tights": "Лосины",
+      "jumpsuit": "Комбинезон",
+      "bodysuit": "Боди",
+      "swimsuit": "Купальник",
+      "trunks": "Плавки",
+      "coat": "Пальто",
+      "raincoat": "Плащ",
+      "jacket (winter)": "Куртка",
+      "puffer": "Пуховик",
+      "windbreaker": "Ветровка",
+      "parka": "Парка",
+      "bomber": "Бомбер",
+      "leather jacket": "Косуха",
+      "shearling": "Дубленка",
+      "fur coat": "Шуба",
+      "half-fur": "Полушубок",
+      "cape": "Накидка",
+      "poncho": "Пончо",
+      "shawl": "Шаль",
+      "wrap": "Палантин",
+      "snood": "Снуд",
+      "scarf": "Шарф",
+      "gloves": "Перчатки",
+      "mittens": "Варежки",
+      "fingerless gloves": "Митенки",
+      "socks": "Носки",
+      "knee-highs": "Гольфы",
+      "stockings": "Чулки",
+      "pantyhose": "Колготки",
+      "underwear": "Нижнее белье",
+      "bra": "Бюстгальтер",
+      "briefs": "Трусы",
+      "boxers": "Боксеры",
+      "swim briefs": "Плавки",
+      "undershirt": "Майка",
+      "pajamas": "Пижама",
+      "nightshirt": "Ночная рубашка",
+      "robe": "Халат",
+      "slippers": "Тапочки",
+      "sandals": "Сандалии",
+      "flip-flops": "Шлепанцы",
+      "vietnamese sandals": "Вьетнамки",
+      "women's shoes": "Босоножки",
+      "dress shoes": "Туфли",
+      "loafers": "Лодочки",
+      "ballet flats": "Балетки",
+      "moccasins": "Мокасины",
+      "sneakers": "Кроссовки",
+      "plimsolls": "Кеды",
+      "slip-ons": "Слипоны",
+      "boots": "Ботинки",
+      "ankle boots": "Полусапожки",
+      "uggs": "Угги",
+      "felt boots": "Валенки",
+      "galoshes": "Галоши",
+      "booties": "Ботильоны",
+      // Канцелярские товары:
+      "pen": "Ручка",
+      "pencil": "Карандаш",
+      "eraser": "Ластик",
+      "notebook": "Тетрадь",
+      "pad": "Блокнот",
+      "paper": "Бумага",
+      "book": "Книга",
+      "paper clips": "Скрепки",
+      "stapler": "Степлер",
+      "hole punch": "Дырокол",
+      "glue": "Клей",
+      "scissors": "Ножницы",
+      "ruler": "Линейка",
+      "marker": "Маркер",
+      "files": "Файлы",
+      "folders": "Папки",
+      "envelopes": "Конверты",
+      // Еда и напитки:
+      "bread": "Хлеб",
+      "milk": "Молоко",
+      "eggs": "Яйца",
+      "cheese": "Сыр",
+      "butter": "Масло",
+      "fruit": "Фрукты",
+      "vegetable": "Овощи",
+      "meat": "Мясо",
+      "fish": "Рыба",
+      "cereal": "Крупы",
+      "pasta": "Макароны",
+      "sugar": "Сахар",
+      "salt": "Соль",
+      "tea": "Чай",
+      "coffee": "Кофе",
+      "juice": "Сок",
+      "bottled water": "Вода в бутылке",
+      "soda": "Газированная вода",
+      "mineral water": "Минеральная вода",
+      "soft drink": "Сладкая газировка",
+      "lemonade": "Лимонад",
+      "cola": "Кола",
+      "fanta": "Фанта",
+      "sprite": "Спрайт",
+      "pepsi": "Пепси",
+      "mirinda": "Миринда",
+      "tarhun": "Тархун",
+      "dushes": "Дюшес",
+      "baikal": "Байкал",
+      "kvass": "Квас",
+      "compote": "Компот",
+      "mors": "Морс",
+      "kissel": "Кисель",
+      "sbiten": "Сбитень",
+      "mead": "Медовуха",
+      "beer": "Пиво",
+      "wine": "Вино",
+      "champagne": "Шампанское",
+      "vodka": "Водка",
+      "cognac": "Коньяк",
+      "whiskey": "Виски",
+      "rum": "Ром",
+      "tequila": "Текила",
+      "gin": "Джин",
+      "liqueur": "Ликер",
+      "tincture": "Настойка",
+      "fruit brandy": "Наливка",
+      "balm": "Бальзам",
+      "aperitif": "Аперитив",
+      "digestif": "Дижестив",
+      "cocktail": "Коктейль",
+      "smoothie": "Смузи",
+      "fresh juice": "Фреш",
+      "milkshake": "Милкшейк",
+      "cappuccino": "Капучино",
+      "latte": "Латте",
+      "espresso": "Эспрессо",
+      "americano": "Американо",
+      "mocha": "Мокко",
+      "raf": "Раф",
+      "flat white": "Флэт уайт",
+      "macchiato": "Макиато",
+      "ristretto": "Ристретто",
+      "lungo": "Лунго",
+      "doppio": "Доппио",
+      "cortado": "Кортадо",
+      "melange": "Меланж",
+      "glacee": "Гляссе",
+      "irish coffee": "Айриш кофе",
+      "viennese coffee": "Кофе по-венски",
+      "turkish coffee": "Кофе по-турецки",
+      "irish coffee (variant 2)": "Кофе по-ирландски",
+      // Транспорт (дополнительно)
+      "sedan": "Легковой автомобиль",
+      "truck (transport)": "Грузовой автомобиль",
+      "tram (transport)": "Трамвай",
+      "trolleybus (transport)": "Троллейбус",
+      "subway (transport)": "Метро",
+      "train (transport)": "Поезд",
+      "airplane (transport)": "Самолет",
+      "helicopter": "Вертолет",
+      "ship": "Корабль",
+      "boat (transport)": "Лодка",
+      "yacht": "Яхта",
+      "cutter": "Катер",
+      "motorcycle (transport)": "Мотоцикл",
+      "scooter": "Скутер",
+      "bicycle (transport)": "Велосипед",
+      "kick scooter": "Самокат",
+      "roller skates": "Роликовые коньки",
+      "skateboard": "Скейтборд",
+      "longboard": "Лонгборд",
+      "hoverboard": "Гироскутер",
+      "electric scooter": "Электросамокат",
+      "segway": "Сегвей",
+      "unicycle": "Моноколесо",
+      "child car seat": "Автокресло",
+      "booster seat": "Бустер",
+      "seatbelt": "Ремни безопасности",
+      "airbag": "Подушка безопасности",
+      "first aid kit": "Аптечка автомобильная",
+      "fire extinguisher": "Огнетушитель",
+      "emergency stop sign": "Знак аварийной остановки",
+      "tow rope": "Трос буксировочный",
+      "jumper cables": "Провода прикуривания",
+      "car pump": "Насос автомобильный",
+      "jack": "Домкрат",
+      "spanner": "Баллонный ключ",
+      "spare tire": "Запаска",
+      "car tools": "Инструменты автомобильные",
+      "compressor (transport)": "Компрессор",
+      "car vacuum": "Пылесос автомобильный",
+      "snow brush": "Щетка для снега",
+      "ice scraper": "Скребок для льда",
+      "chains": "Цепи противоскольжения",
+      "roof rack": "Багажник на крышу",
+      "tow hitch": "Фаркоп",
+      "trailer": "Прицеп",
+      "car cover": "Тент автомобильный",
+      "seat covers": "Чехлы на сиденья",
+      "floor mats": "Коврики автомобильные",
+      "car stereo": "Магнитола",
+      "sound system (transport)": "Акустическая система",
+      "navigator": "Навигатор",
+      "dashboard camera": "Видеорегистратор",
+      "radar detector": "Радар-детектор",
+      "car alarm": "Сигнализация автомобильная",
+      "central locking": "Центральный замок",
+      "power windows": "Электростеклоподъемники",
+      "power mirrors": "Электрозеркала",
+      "heated seats": "Подогрев сидений",
+      "heated steering wheel": "Подогрев руля",
+      "cruise control": "Круиз-контроль",
+      "climate control": "Климат-контроль",
+      "air conditioning": "Кондиционер",
+      "sunroof": "Люк",
+      "panoramic roof": "Панорамная крыша",
+      "convertible roof": "Складная крыша",
+      "hatchback": "Хетчбэк",
+      "liftback": "Лифтбэк",
+      "station wagon": "Универсал",
+      "minivan": "Минивэн",
+      "van": "Фургон",
+      "pickup truck": "Пикап",
+      "suv": "Внедорожник",
+      "crossover": "Кроссовер",
+      "limousine": "Лимузин",
+      "sports car": "Спорткар",
+      "coupe": "Купе",
+      "roadster": "Родстер",
+      "cabriolet": "Кабриолет",
+      "targa": "Тарга",
+      "electric car": "Электромобиль",
+      "hybrid car": "Гибридный автомобиль",
+      "fuel cell car": "Водородный автомобиль",
+      "autonomous car": "Автономный автомобиль",
+      "concept car": "Концепт-кар",
+      "race car": "Гоночный автомобиль",
+      "rally car": "Раллийный автомобиль",
+      "formula 1 car": "Формула 1",
+      "kart": "Карт",
+      "quad bike": "Квадроцикл",
+      "snowmobile": "Снегоход",
+      "jet ski": "Гидроцикл",
+      "bicycle helmet": "Велосипедный шлем",
+      "motorcycle helmet": "Мотоциклетный шлем",
+      "ski helmet": "Лыжный шлем",
+      "construction helmet": "Каска строительная",
+      "firefighter helmet": "Каска пожарного",
+      "police helmet": "Шлем полицейского",
+      "military helmet": "Шлем военного",
+      "sportshelmet": "Спортивный шлем",
+      "safety glasses": "Очки защитные",
+      "goggles": "Очки",
+      "sunglasses": "Солнцезащитные очки",
+      "optical glasses": "Очки для зрения",
+      "reading glasses": "Очки для чтения",
+      "swimming goggles": "Очки для плавания",
+      "ski goggles": "Лыжные очки",
+      "welding goggles": "Сварочные очки",
+      "night vision goggles": "Очки ночного видения",
+      "virtual reality headset": "Шлем виртуальной реальности",
+      "augmented reality glasses": "Очки дополненной реальности",
+      "smart glasses": "Умные очки",
+      "3d glasses": "3D очки",
+      "binoculars": "Бинокль",
+      "telescope": "Телескоп",
+      "microscope": "Микроскоп",
+      "magnifying glass": "Лупа",
+      "compass": "Компас",
+      "gps device": "GPS-навигатор",
+      "speedometer": "Спидометр",
+      "tachometer": "Тахометр",
+      "odometer": "Одометр",
+      "thermometer (transport)": "Термометр",
+      "barometer": "Барометр",
+      "altimeter": "Высотомер",
+      "hygrometer": "Гигрометр",
+      "anemometer": "Анемометр",
+      "weather vane": "Флюгер",
+      "rain gauge": "Дождемер",
+      "seismograph": "Сейсмограф",
+      " Geiger counter": "Счетчик Гейгера",
+      "metal detector": "Металлоискатель",
+      "radar": "Радар",
+      "sonar": "Сонар",
+      "satellite dish": "Спутниковая антенна",
+      "radio telescope": "Радиотелескоп",
+      "antenna (electronics)": "Антенна",
+      "satellite": "Спутник",
+      "space station": "Космическая станция",
+      "rocket": "Ракета",
+      "space shuttle": "Космический шаттл",
+      "space probe": "Космический зонд",
+      "rover (space)": "Марсоход",
+      "telescope (space)": "Телескоп (космос)",
+      "satellite phone": "Спутниковый телефон",
+      "walkie-talkie": "Рация",
+      "megaphone": "Мегафон",
+      "siren": "Сирена",
+      "alarm": "Сигнализация",
+      "buzzer": "Зуммер",
+      "bell": "Колокол",
+      "whistle": "Свисток",
+      "horn (vehicle)": "Гудок",
+      "foghorn": "Рында",
+      "air horn": "Пневматический гудок",
+      "steam whistle": "Паровой свисток",
+      "train whistle": "Свисток поезда",
+      "ship horn": "Гудок корабля",
+      "factory siren": "Сирена завода",
+      "school bell": "Школьный звонок",
+      "church bell": "Церковный колокол",
+      "fire alarm": "Пожарная сигнализация",
+      "burglar alarm": "Сигнализация охранная",
+      "car alarm (sound)": "Сигнализация (звук)",
+      "smoke detector": "Детектор дыма",
+      "carbon monoxide detector": "Детектор угарного газа",
+      "motion detector": "Датчик движения",
+      "presence detector": "Датчик присутствия",
+      "leak detector": "Датчик протечки",
+      "gas detector": "Датчик газа",
+      "radiation detector": "Датчик радиации",
+      "explosives detector": "Детектор взрывчатки",
+      "metal detector (security)": "Металлоискатель",
+      "x-ray machine": "Рентген",
+      "ct scanner": "КТ-сканер",
+      "mri scanner": "МРТ-сканер",
+      "ultrasound machine": "УЗИ",
+      "ecg machine": "ЭКГ",
+      "eeg machine": "ЭЭГ",
+      "hearing aid": "Слуховой аппарат",
+      "pacemaker": "Кардиостимулятор",
+      "defibrillator": "Дефибриллятор",
+      "ventilator (medical)": "Аппарат ИВЛ",
+      "anesthesia machine": "Наркозный аппарат",
+      "dialysis machine": "Аппарат диализа",
+      "incubator": "Инкубатор",
+      "stretcher": "Носилки",
+      "wheelchair": "Инвалидная коляска",
+      "crutches": "Костыли",
+      "cane": "Трость",
+      "walker": "Ходунки",
+      "prosthetic limb": "Протез конечности",
+      "orthopedic cast": "Гипс",
+      "band aid": "Пластырь",
+      "bandage": "Бинт",
+      "gauze": "Марля",
+      "cotton swab": "Ватная палочка",
+      "syringe": "Шприц",
+      "needle (medical)": "Игла",
+      "scalpel": "Скальпель",
+      "forceps": "Пинцет",
+      "scissors (medical)": "Ножницы",
+      "stethoscope": "Стетоскоп",
+      "sphygmomanometer": "Тонометр",
+      "thermometer (medical)": "Термометр",
+      "otoscope": "Отоскоп",
+      "ophthalmoscope": "Офтальмоскоп",
+      "laryngoscope": "Ларингоскоп",
+      "bronchoscope": "Бронхоскоп",
+      "endoscope": "Эндоскоп",
+      "colonoscope": "Колоноскоп",
+      "cystoscope": "Цистоскоп",
+      "arthroscope": "Артроскоп",
+      "laparoscope": "Лапароскоп",
+      "biopsy needle": "Биопсийная игла",
+      "bone saw": "Пила костная",
+      "amputation saw": "Пила ампутационная",
+      "trepan": "Трепан",
+      "tourniquet": "Жгут",
+      "iv stand": "Штатив для капельницы",
+      "oxygen tank": "Кислородный баллон",
+      "suction machine": "Отсос медицинский",
+      "patient monitor": "Монитор пациента",
+      "defibrillator (medical)": "Дефибриллятор",
+      "pacemaker (medical)": "Кардиостимулятор",
+      "hearing aid (medical)": "Слуховой аппарат",
+      "prosthetic eye": "Глазной протез",
+      "prosthetic nose": "Носовой протез",
+      "prosthetic ear": "Ушной протез",
+      "prosthetic hand": "Протез руки",
+      "prosthetic leg": "Протез ноги",
+      "exoskeleton": "Экзоскелет",
+      "wheelchair (medical)": "Инвалидная коляска",
+      "crutches (medical)": "Костыли",
+      "cane (medical)": "Трость",
+      "walker (medical)": "Ходунки",
+      // Дополнительные категории
+      "face": "лицо",
+      "hand": "рука",
+      "nose": "нос",
+      "eye": "глаз",
+      "mouth": "рот",
+      "ear": "ухо",
+      "hair": "волосы",
+      "eyebrow": "бровь",
+      "eyelash": "ресница",
+      "forehead": "лоб",
+      "cheek": "щека",
+      "chin": "подбородок",
+      "neck": "шея",
+      "shoulder": "плечо",
+      "arm": "рука",
+      "elbow": "локоть",
+      "wrist": "запястье",
+      "finger": "палец",
+      "nail": "ноготь",
+      "thumb": "большой палец",
+      "leg": "нога",
+      "knee": "колено",
+      "ankle": "лодыжка",
+      "foot": "стопа",
+      "toe": "палец ноги",
+      "heel": "пятка",
+      "back": "спина",
+      "chest": "грудь",
+      "stomach": "живот",
+      "waist": "талия",
+      "hip": "бедро",
+      "buttocks": "ягодицы",
+      "skin": "кожа",
+      "beard": "борода",
+      "mustache": "усы",
+      "sideburns": "бакенбарды",
+      "haircut": "стрижка",
+      "bangs": "челка",
+      "ponytail": "хвост",
+      "braid": "коса",
+      "wig": "парик",
+      "hat": "шляпа",
+      "cap": "кепка",
+      "beanie": "шапка",
+      "beret": "берет",
+      "sun hat": "солнечная шляпа",
+      "baseball cap": "бейсболка",
+      "fedora": "федора",
+      "top hat": "цилиндр",
+      "bowler hat": "котелок",
+      "straw hat": "соломенная шляпа",
+      "cowboy hat": "ковбойская шляпа",
+      "sombrero": "сомбреро",
+      "turban": "тюрбан",
+      "veil": "вуаль",
+      "mask": "маска",
+      "sunglasses (accessory)": "солнцезащитные очки",
+      "glasses": "очки",
+      "scarf (accessory)": "шарф",
+      "gloves (accessory)": "перчатки",
+      "belt": "ремень",
+      "tie": "галстук",
+      "bow tie": "бабочка",
+      "pocket square": "платок нагрудный",
+      "cufflinks": "запонки",
+      "watch": "часы",
+      "ring": "кольцо",
+      "necklace": "ожерелье",
+      "bracelet": "браслет",
+      "earrings": "серьги",
+      "brooch": "брошь",
+      "pendant": "подвеска",
+      "tiara": "тиара",
+      "crown": "корона",
+      "purse": "кошелек",
+      "handbag": "сумка",
+      "clutch": "клатч",
+      "backpack": "рюкзак",
+      "suitcase": "чемодан",
+      "umbrella": "зонт",
+      "walking stick": "трость",
+      "cane (accessory)": "трость",
+      "badge": "значок",
+      "ribbon": "лента",
+      "medal": "медаль",
+      "trophy": "трофей",
+      "flag": "флаг",
+      "banner": "баннер",
+      "poster": "плакат",
+      "sign": "знак",
+      "label": "этикетка",
+      "sticker": "наклейка",
+      "stamp": "печать",
+      "ticket": "билет",
+      "card": "карта",
+      "postcard": "открытка",
+      "invitation": "приглашение",
+      "menu": "меню",
+      "newspaper": "газета",
+      "magazine": "журнал",
+      "booklet": "буклет",
+      "brochure": "брошюра",
+      "flyer": "флаер",
+      "pamphlet": "памфлет",
+      "leaflet": "листовка",
+      "folder": "папка",
+      "document": "документ",
+      "form": "форма",
+      "contract": "контракт",
+      "certificate": "сертификат",
+      "diploma": "диплом",
+      "license": "лицензия",
+      "id card": "удостоверение",
+      "passport": "паспорт",
+      "visa": "виза",
+      "ticket (travel)": "билет (проезд)",
+      "boarding pass": "посадочный талон",
+      "receipt": "чек",
+      "invoice": "счет",
+      "bill": "счет",
+      "price tag": "ценник",
+      "barcode": "штрих-код",
+      "qr code": "QR-код",
+      "calendar": "календарь",
+      "clock": "часы",
+      "timer": "таймер",
+      "stopwatch": "секундомер",
+      "thermometer": "термометр",
+      "barometer": "барометр",
+      "hygrometer": "гигрометр",
+      "compass (tool)": "компас",
+      "level": "уровень",
+      "ruler (tool)": "линейка",
+      "tape measure": "рулетка",
+      "scale": "весы",
+      "magnifying glass (tool)": "лупа",
+      "screwdriver": "отвертка",
+      "wrench": "гаечный ключ",
+      "hammer": "молоток",
+      "pliers": "плоскогубцы",
+      "saw": "пила",
+      "drill": "дрель",
+      "grinder": "шлифовальная машина",
+      "welding machine": "сварочный аппарат",
+      "sewing machine": "швейная машина",
+      "knitting machine": "вязальная машина",
+      "embroidery machine": "вышивальная машина",
+      "loom": "ткацкий станок",
+      "spinning wheel": "прялка",
+      "potter's wheel": "гончарный круг",
+      "lathe": "токарный станок",
+      "milling machine": "фрезерный станок",
+      "printing press": "печатный станок",
+      "typewriter": "пишущая машинка",
+      "computer keyboard": "клавиатура",
+      "computer mouse": "мышь",
+      "scanner (tool)": "сканер",
+      "printer (tool)": "принтер",
+      "camera (tool)": "фотоаппарат",
+      "video camera": "видеокамера",
+      "microphone (tool)": "микрофон",
+      "telephone (tool)": "телефон",
+      "mobile phone": "мобильный телефон",
+      "tablet (tool)": "планшет",
+      "laptop (tool)": "ноутбук",
+      "computer (tool)": "компьютер",
+      "television": "телевизор",
+      "radio": "радио",
+      "projector": "проектор",
+      "screen": "экран",
+      "monitor": "монитор",
+      "display": "дисплей",
+      "touchscreen": "сенсорный экран",
+      "remote control": "пульт",
+      "speaker": "колонка",
+      "headphones (tool)": "наушники",
+      "earphones": "наушники",
+      "microphone (device)": "микрофон",
+      "webcam (device)": "веб-камера",
+      "router (device)": "роутер",
+      "modem (device)": "модем",
+      "server": "сервер",
+      "database": "база данных",
+      "software": "программное обеспечение",
+      "application": "приложение",
+      "program": "программа",
+      "operating system": "операционная система",
+      "driver (software)": "драйвер",
+      "firmware": "прошивка",
+      "source code": "исходный код",
+      "algorithm": "алгоритм",
+      "data": "данные",
+      "information": "информация",
+      "knowledge": "знание",
+      "wisdom": "мудрость",
+      "intelligence": "интеллект",
+      "artificial intelligence": "искусственный интеллект",
+      "machine learning": "машинное обучение",
+      "deep learning": "глубокое обучение",
+      "neural network": "нейронная сеть",
+      "big data": "большие данные",
+      "cloud computing": "облачные вычисления",
+      "internet": "интернет",
+      "world wide web": "всемирная паутина",
+      "website": "веб-сайт",
+      "web page": "веб-страница",
+      "web browser": "веб-браузер",
+      "search engine": "поисковая система",
+      "social media": "социальные медиа",
+      "online store": "интернет-магазин",
+      "e-commerce": "электронная коммерция",
+      "online banking": "онлайн-банкинг",
+      "online education": "онлайн-образование",
+      "online gaming": "онлайн-игры",
+      "online dating": "онлайн-знакомства",
+      "online news": "онлайн-новости",
+      "online forum": "онлайн-форум",
+      "online chat": "онлайн-чат",
+      "email": "электронная почта",
+      "video call": "видеозвонок",
+      "conference call": "конференц-связь",
+      "webinar": "вебинар",
+      "podcast": "подкаст",
+      "blog": "блог",
+      "vlog": "влог",
+      "wiki": "вики",
+      "online encyclopedia": "онлайн-энциклопедия",
+      "online dictionary": "онлайн-словарь",
+      "online translator": "онлайн-переводчик",
+      "online map": "онлайн-карта",
+      "online navigation": "онлайн-навигация",
+      "online booking": "онлайн-бронирование",
+      "online reservation": "онлайн-резервирование",
+      "online ticket": "онлайн-билет",
+      "online check-in": "онлайн-регистрация",
+      "online payment": "онлайн-платеж",
+      "online shopping": "онлайн-шопинг",
+      "online auction": "онлайн-аукцион",
+      "online marketplace": "онлайн-рынок",
+      "online advertising": "онлайн-реклама",
+      "online marketing": "онлайн-маркетинг",
+      "online survey": "онлайн-опрос",
+      "online poll": "онлайн-опрос",
+      "online petition": "онлайн-петиция",
+      "online review": "онлайн-отзыв",
+      "online rating": "онлайн-рейтинг",
+      "online comment": "онлайн-комментарий",
+      "online discussion": "онлайн-дискуссия",
+      "online debate": "онлайн-дебаты",
+      "online voting": "онлайн-голосование",
+      "online election": "онлайн-выборы",
+      "online activism": "онлайн-активизм",
+      "online community": "онлайн-сообщество",
+      "online forum (community)": "онлайн-форум",
+      "online chat (community)": "онлайн-чат",
+      "online group": "онлайн-группа",
+      "online network": "онлайн-сеть",
+      "online dating service": "сайт знакомств",
+      "online matchmaking service": "сайт знакомств",
+      "online friendship service": "сайт знакомств",
+      "online social network": "социальная сеть",
+      "online gaming community": "игровое онлайн-сообщество",
+      "online role-playing game": "онлайн-ролевая игра",
+      "massively multiplayer online role-playing game": "многопользовательская ролевая онлайн-игра",
+      "virtual world": "виртуальный мир",
+      "metaverse": "метавселенная",
+      "virtual reality": "виртуальная реальность",
+      "augmented reality": "дополненная реальность",
+      "mixed reality": "смешанная реальность",
+      "extended reality": "расширенная реальность",
+    };
+
+    // --- Функции для работы с камерой ---
+    async function initCamera(facingMode) {
+      const constraints = {
+        audio: false,
+        video: {
+          facingMode: facingMode,
+          width: { ideal: 1920 },  // Попробуем Full HD
+          height: { ideal: 1080 }
+        }
       };
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+        video.srcObject = stream;
+        currentFacingMode = facingMode;
+      } catch (err) {
+        console.error("Ошибка при открытии камеры:", err);
+        alert("Не удалось получить доступ к камере. Пожалуйста, убедитесь, что камера подключена и разрешен доступ.");
+      }
     }
-    
-    // Подгон размеров canvas
+
+    function stopCamera() {
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        video.srcObject = null;
+      }
+    }
+
+    async function switchCamera() {
+      stopCamera();
+      const newFacingMode = currentFacingMode === "user" ? "environment" : "user";
+      await initCamera(newFacingMode);
+    }
+
+    // --- Функции для работы с полноэкранным режимом ---
+    function toggleFullscreen() {
+      if (!document.fullscreenElement) {
+        container.requestFullscreen().catch(err => {
+          console.error(`Ошибка при попытке перехода в полноэкранный режим: ${err.message} (${err.name})`);
+        });
+      } else {
+        document.exitFullscreen();
+      }
+    }
+
+    // --- Функции для работы с холстами ---
     function resizeCanvases() {
       const width = video.videoWidth || window.innerWidth;
       const height = video.videoHeight || window.innerHeight;
+      
       if (arMode) {
         overlayCanvas.width = width * 2;
         overlayCanvas.height = height;
@@ -169,51 +1022,279 @@
         drawCanvas.height = height;
       }
     }
-    
-    // Обработчики кнопок
-    fullscreenBtn.addEventListener('click', () => {
-      if (document.fullscreenElement) {
-        document.exitFullscreen();
-      } else {
-        container.requestFullscreen();
+
+    // --- Функции для MediaPipe Hands ---
+    const hands = new Hands({
+      locateFile: (file) => {
+        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
       }
     });
-    
-    switchCameraBtn.addEventListener('click', () => {
-      currentFacingMode = currentFacingMode === "user" ? "environment" : "user";
-      initCamera(currentFacingMode);
+    hands.setOptions({
+      maxNumHands: 1,  // Отслеживаем только одну руку
+      modelComplexity: 1,
+      minDetectionConfidence: 0.7,
+      minTrackingConfidence: 0.7
     });
-    
-    toggleMirrorBtn.addEventListener('click', () => {
-      mirrorMode = !mirrorMode;
-      container.classList.toggle('mirror', mirrorMode);
-    });
-    
-    arBtn.addEventListener('click', () => {
-      arMode = !arMode;
-      container.classList.toggle('ar-mode', arMode);
-      resizeCanvases();
-    });
-    
-    // Остальной код обработки жестов, распознавания лиц и объектов
-    // ... (оставлено без изменений, но с учетом arMode в функциях)
-    
+    hands.onResults(onHandsResults);
+
+    function onHandsResults(results) {
+      if (!overlayCanvas.width || !overlayCanvas.height) {
+        resizeCanvases();
+      }
+      overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+      const mirror = arMode ? false : mirrorMode; // Изменено для AR режима
+      const mirrorX = (x, width) => mirror ? overlayCanvas.width - x - width : x;
+
+      if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        const landmarks = results.multiHandLandmarks[0];
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+        // Рисуем контуры руки и ограничивающий прямоугольник
+        for (const point of landmarks) {
+          const x = mirrorX(point.x * video.videoWidth, 0); // mirrorX применяется к координате X
+          const y = point.y * video.videoHeight;
+          minX = Math.min(minX, x);
+          minY = Math.min(minY, y);
+          maxX = Math.max(maxX, x);
+          maxY = Math.max(maxY, y);
+          overlayCtx.beginPath();
+          overlayCtx.arc(x, y, 5, 0, 2 * Math.PI);
+          overlayCtx.fillStyle = 'rgba(0, 255, 0, 0.8)';
+          overlayCtx.fill();
+        }
+
+        const width = maxX - minX;
+        const height = maxY - minY;
+        lastHandBox = { x: minX, y: minY, w: width, h: height }; // сохраняем для COCO SSD
+
+        overlayCtx.strokeStyle = 'rgba(0, 255, 0, 0.8)';
+        overlayCtx.lineWidth = 2;
+        overlayCtx.strokeRect(minX, minY, width, height);
+
+        // Определение жеста "кулак"
+        const thumbTip = landmarks[4];
+        const indexTip = landmarks[8];
+        const middleTip = landmarks[12];
+        const ringTip = landmarks[16];
+        const pinkyTip = landmarks[20];
+
+        const thumbX = mirrorX(thumbTip.x * video.videoWidth, 0); // mirrorX применяется и здесь
+        const thumbY = thumbTip.y * video.videoHeight;
+        const indexX = mirrorX(indexTip.x * video.videoWidth, 0);
+        const indexY = indexTip.y * video.videoHeight;
+        const middleX = mirrorX(middleTip.x * video.videoWidth, 0);
+        const middleY = middleTip.y * video.videoHeight;
+        const ringX = mirrorX(ringTip.x * video.videoWidth, 0);
+        const ringY = ringTip.y * video.videoHeight;
+        const pinkyX = mirrorX(pinkyTip.x * video.videoWidth, 0);
+        const pinkyY = pinkyTip.y * video.videoHeight;
+
+        const distThumbIndex = Math.hypot(thumbX - indexX, thumbY - indexY);
+        const distThumbMiddle = Math.hypot(thumbX - middleX, thumbY - middleY);
+        const distThumbRing = Math.hypot(thumbX - ringX, thumbY - ringY);
+        const distThumbPinky = Math.hypot(thumbX - pinkyX, thumbY - pinkyY);
+
+        const isFist = distThumbIndex < width * 0.5 && distThumbMiddle < width * 0.5 && distThumbRing < width * 0.5 && distThumbPinky < width * 0.5;
+        const now = Date.now();
+
+        if (isFist && !lastFistState) {
+          fistCount++;
+          lastFistState = true;
+          lastTimeFist = now;
+          gestureActive = true; // Начинаем жест
+          drawCtx.beginPath(); // Начинаем новый путь для рисования
+          drawCtx.strokeStyle = 'rgba(255, 0, 0, 0.8)';
+          drawCtx.lineWidth = 5;
+        } else if (!isFist) {
+          lastFistState = false;
+          if (gestureActive) {
+            gestureActive = false; // Заканчиваем жест, если кулак разжат
+          }
+        }
+
+        if (gestureActive && isFist) {
+          const palmBase = landmarks[0];
+          const x = mirrorX(palmBase.x * video.videoWidth, 0);
+          const y = palmBase.y * video.videoHeight;
+
+          if (lastDrawPoint) {
+            drawCtx.lineTo(x, y);
+            drawCtx.stroke();
+          }
+          lastDrawPoint = { x, y };
+        } else {
+          lastDrawPoint = null;
+        }
+
+        if (fistCount >= 3 && (now - lastTimeFist) < 3000) {
+          alert("Обнаружено 3 сжатых кулака за 3 секунды!");
+          fistCount = 0; // Сбрасываем счетчик после обнаружения
+        }
+      } else {
+        lastHandBox = null; // Рука не обнаружена, сбрасываем
+        lastDrawPoint = null; // Сброс рисования при отсутствии руки
+        if (gestureActive) {
+          gestureActive = false; // Заканчиваем жест, если рука потеряна
+        }
+      }
+    }
+
+    // --- Загрузка моделей Face API ---
+    let faceModelsLoaded = false;
+    const faceDetectionOptions = new faceapi.TinyFaceDetectorOptions({ inputSize: 320, confidenceThreshold: 0.5 });
+
+    async function initFaceApi() {
+      await faceapi.loadTinyFaceDetectorModel('https://raw.githubusercontent.com/justadudewhohacks/face-api.js/master/weights/');
+      await faceapi.loadAgeGenderModel('https://raw.githubusercontent.com/justadudewhohacks/face-api.js/master/weights/');
+      await faceapi.loadFaceExpressionModel('https://raw.githubusercontent.com/justadudewhohacks/face-api.js/master/weights/');
+      faceModelsLoaded = true;
+    }
+
+    // --- Загрузка модели COCO-SSD ---
+    let cocoModel = null;
+    async function initCoco() {
+      cocoModel = await tf.loadGraphModel('https://tensorflowjs.cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd/dist/model.json');
+    }
+
+    // --- Функция обработки кадров ---
     async function processFrame() {
       if (video.readyState === 4) {
         resizeCanvases();
-        // ... (оставлено без изменений, но с проверкой arMode)
+        if (faceModelsLoaded) {
+          const detections = await faceapi.detectAllFaces(video, faceDetectionOptions)
+            .withAgeAndGender()
+            .withFaceExpressions();
+          detections.forEach(det => {
+            const { x, y, width, height } = det.detection.box;
+            const mirror = arMode ? false : mirrorMode; // Изменено для AR режима
+            const adjX = mirror ? overlayCanvas.width - x - width : x;
+            overlayCtx.strokeStyle = 'rgba(255, 255, 0, 0.8)';
+            overlayCtx.lineWidth = 2;
+            overlayCtx.strokeRect(adjX, y, width, height);
+
+            // Отрисовка возраста и пола
+            const age = Math.round(det.age);
+            const gender = det.gender;
+            let genderText = gender === 'male' ? 'муж' : 'жен';
+            overlayCtx.fillStyle = 'rgba(255, 255, 0, 0.8)';
+            overlayCtx.font = '14px sans-serif';
+            overlayCtx.fillText(`${genderText}, ${age} лет`, adjX, y - 10);
+
+            // Выражения лица
+            const expressions = det.expressions;
+            let expressionText = '';
+            let maxExpressionValue = -Infinity;
+            for (const key in expressions) {
+              if (expressions[key] > maxExpressionValue) {
+                maxExpressionValue = expressions[key];
+                expressionText = key;
+              }
+            }
+            // Перевод выражения на русский
+            const expressionTranslations = {
+              'angry': 'злой',
+              'disgusted': 'отвращение',
+              'fearful': 'испуганный',
+              'happy': 'счастливый',
+              'sad': 'грустный',
+              'surprised': 'удивленный',
+              'neutral': 'нейтральный'
+            };
+            const translatedExpression = expressionTranslations[expressionText] || expressionText;
+            overlayCtx.font = '12px sans-serif';
+            overlayCtx.fillText(`${translatedExpression}`, adjX, y + height + 15);
+          });
+        }
+        if (cocoModel) {
+          const predictions = await cocoModel.detect(video);
+          predictions.forEach(async pred => {
+            let [x, y, width, height] = pred.bbox;
+            const mirror = arMode ? false : mirrorMode; // Изменено для AR режима
+            const adjX = mirror ? overlayCanvas.width - x - width : x;
+            // Ограничиваем область поиска "рука-объект" только если обнаружен человек
+            if (pred.class === 'person' && lastHandBox) {
+              const objBox = { x: adjX, y, w: width, h: height };
+              const iou = computeIoU(lastHandBox, objBox);
+              if (iou > 0.3) {
+                return; // Не рисуем рамку, если это рука
+              }
+            }
+
+            let color = 'rgba(0, 255, 0, 0.8)'; // Зеленый для обычных объектов
+            let labelPrefix = '';
+            if (['bottle', 'cup', 'bowl', 'sandwich', 'orange', 'apple', 'banana', 'cake', 'pizza', 'hot dog', 'donut', 'muffin'].includes(pred.class.toLowerCase())) {
+              color = 'rgba(0, 0, 255, 0.8)'; // Синий для еды
+              labelPrefix = "еда: ";
+            }  else if (['person'].includes(pred.class.toLowerCase())) {
+              color = 'rgba(255, 0, 0, 0.8)'; // Красный для людей
+              labelPrefix = "человек: ";
+            }
+            let finalLabel;
+            if (useOnlineTranslation) {
+              finalLabel = await translateLabel(pred.class.toLowerCase());
+            } else {
+              finalLabel = labelTranslations[pred.class.toLowerCase()] || pred.class;
+            }
+            overlayCtx.strokeStyle = color;
+            overlayCtx.lineWidth = 2;
+            overlayCtx.strokeRect(adjX, y, width, height);
+            overlayCtx.fillStyle = color;
+            overlayCtx.font = '16px sans-serif';
+            overlayCtx.fillText(labelPrefix + finalLabel, adjX, y > 20 ? y - 5 : y + 15);
+          });
+        }
       }
       requestAnimationFrame(processFrame);
     }
-    
+
+    function computeIoU(box1, box2) {
+      const intersectionX1 = Math.max(box1.x, box2.x);
+      const intersectionY1 = Math.max(box1.y, box2.y);
+      const intersectionX2 = Math.min(box1.x + box1.w, box2.x + box2.w);
+      const intersectionY2 = Math.min(box1.y + box1.h, box2.y + box2.h);
+
+      const intersectionWidth = Math.max(0, intersectionX2 - intersectionX1);
+      const intersectionHeight = Math.max(0, intersectionY2 - intersectionY1);
+      const intersectionArea = intersectionWidth * intersectionHeight;
+
+      const box1Area = box1.w * box1.h;
+      const box2Area = box2.w * box2.h;
+      const unionArea = box1Area + box2Area - intersectionArea;
+
+      if (unionArea === 0) return 0; // Если объединение пусто, то и пересечение тоже
+
+      return intersectionArea / unionArea;
+    }
+
+    // --- Инициализация приложения ---
     async function initApp() {
       await initCamera(currentFacingMode);
-      await initFaceApi();
-      await initCoco();
-      processFrame();
+      initFaceApi().catch(err => console.error("Ошибка загрузки face-api:", err));
+      initCoco().catch(err => console.error("Ошибка загрузки coco-ssd:", err));
+
+      // Установка обработчиков событий
+      window.addEventListener('resize', resizeCanvases);
+      fullscreenBtn.addEventListener('click', toggleFullscreen);
+      switchCameraBtn.addEventListener('click', switchCamera);
+      toggleMirrorBtn.addEventListener('click', () => {
+        mirrorMode = !mirrorMode;
+        container.classList.toggle('mirror', mirrorMode);
+      });
+      arBtn.addEventListener('click', () => { // Обработчик кнопки AR
+        arMode = !arMode;
+        container.classList.toggle('ar-mode', arMode);
+        resizeCanvases();
+      });
+
+      // Запуск обработки кадров
+      video.onloadedmetadata = () => {
+        resizeCanvases();
+        processFrame();
+      };
     }
-    
-    window.addEventListener('load', initApp);
+
+    // --- Запуск приложения при загрузке страницы ---
+    initApp();
   </script>
 </body>
 </html>
