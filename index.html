@@ -13,23 +13,41 @@
       font-family: sans-serif;
       color: #fff;
     }
-    /* Обычный режим */
     #container {
       position: relative;
       width: 100vw;
       height: 100vh;
       background: #000;
+      cursor: pointer;
     }
-    #video, #overlay, #drawLayer {
+    #videoLeft, #videoRight {
       position: absolute;
       top: 0;
       left: 0;
       width: 100%;
       height: 100%;
       object-fit: cover;
+      transform: scaleX(-1); /* Зеркало по умолчанию */
     }
-    #video { transform: scaleX(-1); }
-    canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+    #overlayLeft, #overlayRight, #drawLayer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+    }
+    #videoRight, #overlayRight {
+      display: none; /* Скрыто в нормальном режиме */
+    }
+    .ar-mode #videoLeft, .ar-mode #overlayLeft {
+      width: 50%;
+      left: 0;
+    }
+    .ar-mode #videoRight, .ar-mode #overlayRight {
+      display: block;
+      width: 50%;
+      left: 50%;
+    }
     #controls {
       position: absolute;
       bottom: 10px;
@@ -46,44 +64,23 @@
       cursor: pointer;
       font-size: 14px;
     }
-    #controls button:hover { background: rgba(0,0,0,0.9); }
-    /* AR режим: контейнер делится на две части */
-    .arContainer {
-      display: flex;
-      flex-direction: row;
-      width: 100vw;
-      height: 100vh;
-    }
-    .arView {
-      flex: 1;
-      position: relative;
-      overflow: hidden;
-    }
-    .arView video {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-    }
-    .arView canvas {
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
+    #controls button:hover {
+      background: rgba(0,0,0,0.9);
     }
   </style>
 </head>
 <body>
   <div id="container">
-    <video id="video" autoplay playsinline muted></video>
-    <canvas id="overlay"></canvas>
+    <video id="videoLeft" autoplay playsinline muted></video>
+    <video id="videoRight" autoplay playsinline muted></video>
+    <canvas id="overlayLeft"></canvas>
+    <canvas id="overlayRight"></canvas>
     <canvas id="drawLayer"></canvas>
     <div id="controls">
       <button id="fullscreenBtn">Полный экран</button>
       <button id="switchCameraBtn">Переключить камеру</button>
       <button id="toggleMirrorBtn">Зеркало: Вкл/Выкл</button>
-      <button id="arBtn">AR</button>
+      <button id="arBtn">AR: Выкл</button>
     </div>
   </div>
 
@@ -96,95 +93,141 @@
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
 
   <script>
-    const useOnlineTranslation = false;
-    async function translateLabel(word) {
-      try {
-        const response = await fetch("https://libretranslate.de/translate", {
-          method: "POST",
-          body: JSON.stringify({
-            q: word,
-            source: "en",
-            target: "ru",
-            format: "text"
-          }),
-          headers: { "Content-Type": "application/json" }
-        });
-        const data = await response.json();
-        return data.translatedText || word;
-      } catch (err) {
-        console.error("Ошибка перевода:", err);
-        return word;
-      }
-    }
-
-    // Элементы интерфейса
-    let video = document.getElementById('video');
-    let overlayCanvas = document.getElementById('overlay');
-    let overlayCtx = overlayCanvas.getContext('2d');
-    let drawCanvas = document.getElementById('drawLayer');
-    let drawCtx = drawCanvas.getContext('2d');
+    // Элементы DOM
+    const videoLeft = document.getElementById('videoLeft');
+    const videoRight = document.getElementById('videoRight');
+    const overlayLeft = document.getElementById('overlayLeft');
+    const overlayRight = document.getElementById('overlayRight');
+    const overlayCtxLeft = overlayLeft.getContext('2d');
+    const overlayCtxRight = overlayRight.getContext('2d');
+    const drawCanvas = document.getElementById('drawLayer');
+    const drawCtx = drawCanvas.getContext('2d');
     const fullscreenBtn = document.getElementById('fullscreenBtn');
     const switchCameraBtn = document.getElementById('switchCameraBtn');
     const toggleMirrorBtn = document.getElementById('toggleMirrorBtn');
     const arBtn = document.getElementById('arBtn');
     const container = document.getElementById('container');
 
-    // Глобальные переменные
+    // Переменные состояния
+    let arMode = false;
+    let mirrorMode = true;
     let currentFacingMode = "user";
     let stream = null;
-    let mirrorMode = true;
     let lastHandBox = null;
-    let arMode = false;
-    let originalInnerHTML = container.innerHTML; // для возврата из AR
+    let faceModelsLoaded = false;
+    let cocoModel = null;
+    let drawing = false;
+    let lastX = 0, lastY = 0;
 
-    // Переменные для жестов
-    let fistCount = 0;
-    let gestureActive = false;
-    let lastFistState = false;
-    let lastTimeFist = 0;
-    let lastDrawPoint = null;
-
-    // Словари (оставлены без изменений; словарь labelTranslations сокращён для компактности)
-    const labelTranslations = {
-      "person": "человек", "bicycle": "велосипед", "car": "машина",
-      // ... остальные записи ...
-    };
-    const dangerousObjects = ['knife', 'pistol', 'scissors'];
-    const foodObjects = ['apple', 'banana', 'pizza', 'orange', 'sandwich'];
+    // Переводы и категории
     const emotionTranslations = {
-      neutral: 'нейтральный', happy: 'счастлив', sad: 'грустен',
-      angry: 'злой', fearful: 'испуган', disgusted: 'отвращение', surprised: 'удивлён'
+      "happy": "счастливый",
+      "sad": "грустный",
+      "angry": "злой",
+      "neutral": "нейтральный",
+      "surprised": "удивленный",
+      "disgusted": "отвращение",
+      "fearful": "испуганный"
     };
+    const labelTranslations = {
+      "person": "человек",
+      "bottle": "бутылка",
+      "cup": "чашка",
+      "knife": "нож",
+      "spoon": "ложка",
+      "apple": "яблоко",
+      "banana": "банан"
+    };
+    const dangerousObjects = ["knife"];
+    const foodObjects = ["apple", "banana", "cup"];
 
-    // --- Кнопки управления ---
+    // Инициализация face-api.js
+    async function initFaceApi() {
+      await Promise.all([
+        faceapi.nets.tinyFaceDetector.loadFromUri('https://unpkg.com/face-api.js@0.22.2/weights'),
+        faceapi.nets.faceExpressionNet.loadFromUri('https://unpkg.com/face-api.js@0.22.2/weights'),
+        faceapi.nets.ageGenderNet.loadFromUri('https://unpkg.com/face-api.js@0.22.2/weights')
+      ]);
+      faceModelsLoaded = true;
+      faceDetectionOptions = new faceapi.TinyFaceDetectorOptions({ inputSize: 320 });
+    }
+
+    // Инициализация COCO-SSD
+    async function initCoco() {
+      cocoModel = await cocoSsd.load();
+    }
+
+    // Вычисление IoU
+    function computeIoU(box1, box2) {
+      const x1 = Math.max(box1.x, box2.x);
+      const y1 = Math.max(box1.y, box2.y);
+      const x2 = Math.min(box1.x + box1.w, box2.x + box2.w);
+      const y2 = Math.min(box1.y + box1.h, box2.y + box2.h);
+      const intersection = (x2 > x1 && y2 > y1) ? (x2 - x1) * (y2 - y1) : 0;
+      const union = box1.w * box1.h + box2.w * box2.h - intersection;
+      return intersection / union;
+    }
+
+    // Обработчики событий
     fullscreenBtn.addEventListener('click', () => {
-      if (document.fullscreenElement) {
-        document.exitFullscreen();
-      } else {
-        container.requestFullscreen();
-      }
+      if (document.fullscreenElement) document.exitFullscreen();
+      else container.requestFullscreen();
     });
+
     switchCameraBtn.addEventListener('click', () => {
-      currentFacingMode = (currentFacingMode === "user") ? "environment" : "user";
+      currentFacingMode = currentFacingMode === "user" ? "environment" : "user";
       initCamera(currentFacingMode);
     });
+
     toggleMirrorBtn.addEventListener('click', () => {
       mirrorMode = !mirrorMode;
-      if (!arMode) {
-        video.style.transform = mirrorMode ? 'scaleX(-1)' : 'scaleX(1)';
-      } else {
-        // В AR режиме применяем стиль для обоих видеов
-        document.querySelectorAll(".arView video").forEach(vid => {
-          vid.style.transform = mirrorMode ? 'scaleX(-1)' : 'scaleX(1)';
-        });
-      }
+      const transform = mirrorMode ? 'scaleX(-1)' : 'scaleX(1)';
+      videoLeft.style.transform = transform;
+      videoRight.style.transform = transform;
     });
-    arBtn.addEventListener('click', toggleARMode);
+
+    arBtn.addEventListener('click', () => {
+      arMode = !arMode;
+      arBtn.textContent = arMode ? 'AR: Вкл' : 'AR: Выкл';
+      container.classList.toggle('ar-mode', arMode);
+      resizeCanvases();
+    });
+
     container.addEventListener('click', () => {
       if (!document.fullscreenElement) container.requestFullscreen();
     });
 
-    // --- Инициализация камеры (запрос разрешения) ---
+    // Рисование
+    drawCanvas.addEventListener('mousedown', (e) => {
+      drawing = true;
+      const rect = drawCanvas.getBoundingClientRect();
+      lastX = (e.clientX - rect.left) * (drawCanvas.width / rect.width);
+      lastY = (e.clientY - rect.top) * (drawCanvas.height / rect.height);
+    });
+
+    drawCanvas.addEventListener('mousemove', (e) => {
+      if (drawing) {
+        const rect = drawCanvas.getBoundingClientRect();
+        const x = (e.clientX - rect.left) * (drawCanvas.width / rect.width);
+        const y = (e.clientY - rect.top) * (drawCanvas.height / rect.height);
+        drawCtx.beginPath();
+        drawCtx.moveTo(lastX, lastY);
+        drawCtx.lineTo(x, y);
+        drawCtx.strokeStyle = 'white';
+        drawCtx.lineWidth = 2;
+        drawCtx.stroke();
+        lastX = x;
+        lastY = y;
+      }
+    });
+
+    ['mouseup', 'mouseleave'].forEach(event => {
+      drawCanvas.addEventListener(event, () => {
+        drawing = false;
+      });
+    });
+
+    // Инициализация камеры
     async function initCamera(facingMode = "user") {
       if (stream) stream.getTracks().forEach(track => track.stop());
       try {
@@ -198,277 +241,184 @@
           audio: false
         });
       }
-      if (!arMode) {
-        video.srcObject = stream;
-        video.onloadedmetadata = () => {
-          video.play();
-          resizeCanvases();
-        };
-      }
+      videoLeft.srcObject = stream;
+      videoRight.srcObject = stream;
+      videoLeft.onloadedmetadata = () => {
+        videoLeft.play();
+        resizeCanvases();
+      };
+      videoRight.onloadedmetadata = () => videoRight.play();
     }
 
-    // --- Подгон размеров canvas ---
+    // Изменение размеров canvas
     function resizeCanvases() {
-      if (!arMode) {
-        overlayCanvas.width = video.videoWidth || window.innerWidth;
-        overlayCanvas.height = video.videoHeight || window.innerHeight;
-        drawCanvas.width = overlayCanvas.width;
-        drawCanvas.height = overlayCanvas.height;
+      const containerWidth = container.clientWidth;
+      const containerHeight = container.clientHeight;
+      if (arMode) {
+        const halfWidth = containerWidth / 2;
+        overlayLeft.width = halfWidth;
+        overlayLeft.height = containerHeight;
+        overlayRight.width = halfWidth;
+        overlayRight.height = containerHeight;
+        overlayLeft.style.width = `${halfWidth}px`;
+        overlayLeft.style.height = `${containerHeight}px`;
+        overlayRight.style.width = `${halfWidth}px`;
+        overlayRight.style.height = `${containerHeight}px`;
+        overlayRight.style.left = `${halfWidth}px`;
       } else {
-        // AR: обновляем размеры обоих overlay
-        document.querySelectorAll(".arView canvas").forEach(cv => {
-          cv.width = cv.parentElement.clientWidth;
-          cv.height = cv.parentElement.clientHeight;
-        });
+        overlayLeft.width = containerWidth;
+        overlayLeft.height = containerHeight;
+        overlayLeft.style.width = `${containerWidth}px`;
+        overlayLeft.style.height = `${containerHeight}px`;
+        overlayRight.style.display = 'none';
       }
+      drawCanvas.width = containerWidth;
+      drawCanvas.height = containerHeight;
+      drawCanvas.style.width = `${containerWidth}px`;
+      drawCanvas.style.height = `${containerHeight}px`;
     }
     window.addEventListener('resize', resizeCanvases);
 
-    // --- Функции определения состояния пальцев ---
-    function isFingerExtended(landmarks, pipIdx, tipIdx) {
-      const pip = landmarks[pipIdx], tip = landmarks[tipIdx], wrist = landmarks[0];
-      return Math.hypot(tip.x - wrist.x, tip.y - wrist.y) > Math.hypot(pip.x - wrist.x, pip.y - wrist.y) * 1.3;
-    }
-    function isFist(landmarks) {
-      const fingers = [ { pip: 6, tip: 8 }, { pip: 10, tip: 12 }, { pip: 14, tip: 16 }, { pip: 18, tip: 20 } ];
-      const thumbExtended = isFingerExtended(landmarks, 2, 4);
-      return (!thumbExtended) && fingers.every(f => !isFingerExtended(landmarks, f.pip, f.tip));
-    }
-    function isIndexPointing(landmarks) {
-      const indexExtended = isFingerExtended(landmarks, 6, 8);
-      const otherFingers = [ { pip: 10, tip: 12 }, { pip: 14, tip: 16 }, { pip: 18, tip: 20 } ];
-      return indexExtended && otherFingers.every(f => !isFingerExtended(landmarks, f.pip, f.tip));
-    }
-    function isOkGesture(landmarks) {
-      const dx = landmarks[4].x - landmarks[8].x, dy = landmarks[4].y - landmarks[8].y;
-      return Math.hypot(dx, dy) < 0.05;
-    }
-    function computeIoU(boxA, boxB) {
-      const xA = Math.max(boxA.x, boxB.x), yA = Math.max(boxA.y, boxB.y);
-      const xB = Math.min(boxA.x + boxA.w, boxB.x + boxB.w), yB = Math.min(boxA.y + boxA.h, boxB.y + boxB.h);
-      const interArea = Math.max(0, xB - xA) * Math.max(0, yB - yA);
-      return interArea / ((boxA.w * boxA.h) + (boxB.w * boxB.h) - interArea);
+    // Обработка результатов Mediapipe Hands
+    function onHandsResults(results) {
+      const contexts = arMode ? [overlayCtxLeft, overlayCtxRight] : [overlayCtxLeft];
+      contexts.forEach(ctx => {
+        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+        const mirrorX = (x, width) => mirrorMode ? ctx.canvas.width - x - width : x;
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+          const landmarks = results.multiHandLandmarks[0];
+          let minX = 1, minY = 1, maxX = 0, maxY = 0;
+          landmarks.forEach(pt => {
+            minX = Math.min(minX, pt.x);
+            minY = Math.min(minY, pt.y);
+            maxX = Math.max(maxX, pt.x);
+            maxY = Math.max(maxY, pt.y);
+          });
+          const boxX = minX * ctx.canvas.width;
+          const boxY = minY * ctx.canvas.height;
+          const boxW = (maxX - minX) * ctx.canvas.width;
+          const boxH = (maxY - minY) * ctx.canvas.height;
+          ctx.strokeStyle = 'lime';
+          ctx.lineWidth = 3;
+          const adjX = mirrorX(boxX, boxW);
+          ctx.strokeRect(adjX, boxY, boxW, boxH);
+          if (ctx === overlayCtxLeft) {
+            lastHandBox = { x: adjX, y: boxY, w: boxW, h: boxH };
+          }
+        }
+      });
     }
 
-    // --- Инициализация Mediapipe Hands ---
-    let hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+    // Инициализация Mediapipe Hands
+    let hands = new Hands({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
     hands.setOptions({
-      maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7
+      maxNumHands: 1,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.7,
+      minTrackingConfidence: 0.7
     });
     hands.onResults(onHandsResults);
-    const cameraUtils = new Camera(video, {
-      onFrame: async () => { await hands.send({ image: video }); },
-      width: 640, height: 480
+
+    const cameraUtils = new Camera(videoLeft, {
+      onFrame: async () => { await hands.send({ image: videoLeft }); },
+      width: 640,
+      height: 480
     });
     cameraUtils.start();
 
-    function onHandsResults(results) {
-      if (!overlayCanvas.width || !overlayCanvas.height) resizeCanvases();
-      // Если не в AR режиме – отрисовка на основном overlay
-      if (!arMode) {
-        overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
-        const mirrorX = (x, width) => mirrorMode ? overlayCanvas.width - x - width : x;
-        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-          const landmarks = results.multiHandLandmarks[0];
-          let [minX, minY] = [1, 1], [maxX, maxY] = [0, 0];
-          landmarks.forEach(pt => {
-            if (pt.x < minX) minX = pt.x;
-            if (pt.y < minY) minY = pt.y;
-            if (pt.x > maxX) maxX = pt.x;
-            if (pt.y > maxY) maxY = pt.y;
-          });
-          const boxX = minX * overlayCanvas.width, boxY = minY * overlayCanvas.height,
-                boxW = (maxX - minX) * overlayCanvas.width, boxH = (maxY - minY) * overlayCanvas.height;
-          overlayCtx.strokeStyle = 'lime';
-          overlayCtx.lineWidth = 3;
-          overlayCtx.strokeRect(mirrorX(boxX, boxW), boxY, boxW, boxH);
-          lastHandBox = { x: mirrorX(boxX, boxW), y: boxY, w: boxW, h: boxH };
-
-          const now = Date.now();
-          if (now - lastTimeFist > 700) {
-            const fist = isFist(landmarks);
-            if (fist !== lastFistState) {
-              lastFistState = fist; lastTimeFist = now;
-              if (fist) { fistCount++; console.log("Кулак обнаружен, счёт:", fistCount); }
-            }
-          }
-          if (!gestureActive && fistCount >= 2 && isIndexPointing(landmarks)) {
-            gestureActive = true; console.log("Режим рисования активирован"); lastDrawPoint = null;
-          }
-          if (gestureActive) {
-            const indexTip = landmarks[8];
-            const x = (mirrorMode ? (1 - indexTip.x) : indexTip.x) * overlayCanvas.width;
-            const y = indexTip.y * overlayCanvas.height;
-            if (!lastDrawPoint) lastDrawPoint = { x, y };
-            else {
-              drawCtx.strokeStyle = 'black';
-              drawCtx.lineWidth = 4;
-              drawCtx.lineCap = 'round';
-              drawCtx.beginPath();
-              drawCtx.moveTo(lastDrawPoint.x, lastDrawPoint.y);
-              drawCtx.lineTo(x, y);
-              drawCtx.stroke();
-              lastDrawPoint = { x, y };
-            }
-          }
-          if (gestureActive && isOkGesture(landmarks)) {
-            console.log("Жест OK обнаружен, очистка рисунка");
-            drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
-            gestureActive = false; fistCount = 0; lastDrawPoint = null;
-          }
-        } else { lastHandBox = null; }
-      }
-    }
-
-    // --- Распознавание лиц и объектов, отрисовка рамок и надписей ---
-    let faceModelsLoaded = false, faceDetectionOptions;
-    async function initFaceApi() {
-      const MODEL_URL = '/models';
-      await Promise.all([
-        faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
-        faceapi.nets.ageGenderNet.loadFromUri(MODEL_URL),
-        faceapi.nets.faceExpressionNet.loadFromUri(MODEL_URL)
-      ]);
-      faceDetectionOptions = new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.5 });
-      faceModelsLoaded = true;
-      console.log("Модели face-api загружены");
-    }
-    let cocoModel = null;
-    async function initCoco() {
-      cocoModel = await cocoSsd.load();
-      console.log("Модель COCO-SSD загружена");
-    }
-
-    // Функция отрисовки детекций на переданных контекстах
+    // Обработка кадров
     async function processFrame() {
-      if (video.readyState === 4) {
-        let canvasList = [];
-        if (!arMode) {
-          canvasList.push({ ctx: overlayCtx, canvas: overlayCanvas });
-        } else {
-          const leftOverlay = document.getElementById("leftOverlay");
-          const rightOverlay = document.getElementById("rightOverlay");
-          if (!leftOverlay || !rightOverlay) { requestAnimationFrame(processFrame); return; }
-          canvasList.push({ ctx: leftOverlay.getContext("2d"), canvas: leftOverlay });
-          canvasList.push({ ctx: rightOverlay.getContext("2d"), canvas: rightOverlay });
-        }
-        // Очистка всех canvas
-        canvasList.forEach(({ctx, canvas}) => ctx.clearRect(0, 0, canvas.width, canvas.height));
+      if (videoLeft.readyState === 4) {
+        resizeCanvases();
+        const contexts = arMode ? [overlayCtxLeft, overlayCtxRight] : [overlayCtxLeft];
+        const videoWidth = videoLeft.videoWidth;
+        const videoHeight = videoLeft.videoHeight;
 
+        let faceDetections = [];
         if (faceModelsLoaded) {
-          const detections = await faceapi.detectAllFaces(video, faceDetectionOptions)
-            .withAgeAndGender().withFaceExpressions();
-          detections.forEach(det => {
-            const { x, y, width, height } = det.detection.box;
-            // Применяем зеркальное отображение, если включено
-            const adjX = mirrorMode ? canvasList[0].canvas.width - x - width : x;
-            canvasList.forEach(({ctx}) => {
-              ctx.strokeStyle = 'yellow';
-              ctx.lineWidth = 2;
-              ctx.strokeRect(adjX, y, width, height);
-              const expressions = det.expressions;
-              const dominantExp = Object.keys(expressions).reduce((a, b) => expressions[a] > expressions[b] ? a : b);
-              const mood = emotionTranslations[dominantExp] || dominantExp;
-              ctx.fillStyle = 'yellow';
-              ctx.font = '16px sans-serif';
-              ctx.fillText(`Человек – ${mood}`, adjX, y - 5);
-            });
+          faceDetections = await faceapi.detectAllFaces(videoLeft, faceDetectionOptions)
+            .withAgeAndGender()
+            .withFaceExpressions();
+        }
+
+        let objectPredictions = [];
+        if (cocoModel) {
+          objectPredictions = await cocoModel.detect(videoLeft);
+          objectPredictions.forEach(pred => {
+            pred.translatedLabel = labelTranslations[pred.class.toLowerCase()] || pred.class;
           });
         }
-        if (cocoModel) {
-          const predictions = await cocoModel.detect(video);
-          predictions.forEach(async pred => {
+
+        for (const ctx of contexts) {
+          const scaleX = ctx.canvas.width / videoWidth;
+          const scaleY = ctx.canvas.height / videoHeight;
+          ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+          const mirrorX = (x, width) => mirrorMode ? ctx.canvas.width - x - width : x;
+
+          // Рисуем лица
+          faceDetections.forEach(det => {
+            const { x, y, width, height } = det.detection.box;
+            const drawX = x * scaleX;
+            const drawY = y * scaleY;
+            const drawW = width * scaleX;
+            const drawH = height * scaleY;
+            const adjX = mirrorX(drawX, drawW);
+            ctx.strokeStyle = 'yellow';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(adjX, drawY, drawW, drawH);
+            const expressions = det.expressions;
+            const dominantExp = Object.keys(expressions).reduce((a, b) => expressions[a] > expressions[b] ? a : b);
+            const mood = emotionTranslations[dominantExp] || dominantExp;
+            ctx.fillStyle = 'yellow';
+            ctx.font = '16px sans-serif';
+            ctx.fillText(`Человек – ${mood}`, adjX, drawY - 5);
+          });
+
+          // Рисуем объекты
+          objectPredictions.forEach(pred => {
             let [x, y, width, height] = pred.bbox;
-            const adjX = mirrorMode ? canvasList[0].canvas.width - x - width : x;
-            let color = 'yellow', labelPrefix = "";
-            if (dangerousObjects.includes(pred.class.toLowerCase())) { color = 'red'; labelPrefix = "опасный: "; }
-            else if (foodObjects.includes(pred.class.toLowerCase())) { color = 'green'; labelPrefix = "еда: "; }
-            let finalLabel = useOnlineTranslation ? await translateLabel(pred.class.toLowerCase())
-                                                  : (labelTranslations[pred.class.toLowerCase()] || pred.class);
-            if (pred.class.toLowerCase() === 'person' && lastHandBox) {
-              const objBox = { x: adjX, y, w: width, h: height };
-              if (computeIoU(lastHandBox, objBox) > 0.3) finalLabel = "кисть";
+            const drawX = x * scaleX;
+            const drawY = y * scaleY;
+            const drawW = width * scaleX;
+            const drawH = height * scaleY;
+            const adjX = mirrorX(drawX, drawW);
+            let color = 'yellow';
+            let labelPrefix = "";
+            if (dangerousObjects.includes(pred.class.toLowerCase())) {
+              color = 'red';
+              labelPrefix = "опасный: ";
+            } else if (foodObjects.includes(pred.class.toLowerCase())) {
+              color = 'green';
+              labelPrefix = "еда: ";
             }
-            canvasList.forEach(({ctx}) => {
-              ctx.strokeStyle = color;
-              ctx.lineWidth = 2;
-              ctx.strokeRect(adjX, y, width, height);
-              ctx.fillStyle = color;
-              ctx.font = '16px sans-serif';
-              ctx.fillText(labelPrefix + finalLabel, adjX, y > 20 ? y - 5 : y + 15);
-            });
+            let finalLabel = pred.translatedLabel;
+            if (pred.class.toLowerCase() === 'person' && lastHandBox && ctx === overlayCtxLeft) {
+              const objBox = { x: adjX, y: drawY, w: drawW, h: drawH };
+              const iou = computeIoU(lastHandBox, objBox);
+              if (iou > 0.3) finalLabel = "кисть";
+            }
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(adjX, drawY, drawW, drawH);
+            ctx.fillStyle = color;
+            ctx.font = '16px sans-serif';
+            ctx.fillText(labelPrefix + finalLabel, adjX, drawY > 20 ? drawY - 5 : drawY + 15);
           });
         }
       }
       requestAnimationFrame(processFrame);
     }
 
-    // --- Переключение AR режима ---
-    function toggleARMode() {
-      if (!arMode) {
-        arMode = true;
-        // Сохраняем текущее содержимое для возврата
-        originalInnerHTML = container.innerHTML;
-        container.innerHTML = "";
-        container.classList.add("arContainer");
-        // Создаем два равных вида
-        function createArView(idPrefix) {
-          const view = document.createElement("div");
-          view.className = "arView";
-          const vid = document.createElement("video");
-          vid.id = idPrefix + "Video";
-          vid.autoplay = true;
-          vid.playsInline = true;
-          vid.muted = true;
-          vid.style.objectFit = "cover";
-          vid.style.width = "100%";
-          vid.style.height = "100%";
-          vid.style.transform = mirrorMode ? 'scaleX(-1)' : 'scaleX(1)';
-          vid.srcObject = stream;
-          view.appendChild(vid);
-          const cv = document.createElement("canvas");
-          cv.id = idPrefix + "Overlay";
-          cv.style.position = "absolute";
-          cv.style.top = "0";
-          cv.style.left = "0";
-          cv.style.width = "100%";
-          cv.style.height = "100%";
-          view.appendChild(cv);
-          return view;
-        }
-        const leftView = createArView("left");
-        const rightView = createArView("right");
-        container.appendChild(leftView);
-        container.appendChild(rightView);
-        // Перемещаем блок управления
-        const controls = document.getElementById("controls");
-        container.appendChild(controls);
-        // В AR режиме используем левое видео для детекции
-        video = document.getElementById("leftVideo");
-        video.onloadedmetadata = () => { video.play(); resizeCanvases(); };
-      } else {
-        // Выход из AR режима – возвращаем исходный вид
-        arMode = false;
-        container.classList.remove("arContainer");
-        container.innerHTML = originalInnerHTML;
-        // Восстанавливаем ссылки на элементы
-        video = document.getElementById("video");
-        overlayCanvas = document.getElementById("overlay");
-        overlayCtx = overlayCanvas.getContext("2d");
-        drawCanvas = document.getElementById("drawLayer");
-        drawCtx = drawCanvas.getContext("2d");
-        video.srcObject = stream;
-        video.onloadedmetadata = () => { video.play(); resizeCanvases(); };
-      }
-    }
-
-    // --- Инициализация приложения ---
+    // Инициализация приложения
     async function initApp() {
       await initCamera(currentFacingMode);
       initFaceApi().catch(err => console.error("Ошибка загрузки face-api:", err));
       initCoco().catch(err => console.error("Ошибка загрузки COCO-SSD:", err));
       processFrame();
     }
+
     window.addEventListener('load', initApp);
   </script>
 </body>
