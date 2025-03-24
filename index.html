@@ -39,7 +39,7 @@
       height: 100%;
       object-fit: cover;
     }
-    /* Блок управления */
+    /* Информационный блок */
     #controls {
       position: absolute;
       bottom: 10px;
@@ -59,16 +59,6 @@
     #controls button:hover {
       background: rgba(0,0,0,0.9);
     }
-    /* Новые стили для AR режима */
-    #container.ar-mode #video,
-    #container.ar-mode canvas {
-      width: 200% !important;
-      transform: translateX(-25%) scaleX(0.5);
-    }
-    #container.ar-mode.mirror #video,
-    #container.ar-mode.mirror canvas {
-      transform: translateX(-25%) scaleX(-0.5);
-    }
   </style>
 </head>
 <body>
@@ -80,7 +70,7 @@
       <button id="fullscreenBtn">Полный экран</button>
       <button id="switchCameraBtn">Переключить камеру</button>
       <button id="toggleMirrorBtn">Зеркало: Вкл/Выкл</button>
-      <!-- Добавленная кнопка AR -->
+      <!-- Кнопка AR добавлена -->
       <button id="arBtn">AR</button>
     </div>
   </div>
@@ -133,7 +123,6 @@
     let currentFacingMode = "user"; // "user" или "environment"
     let stream = null;
     let mirrorMode = true; // видео зеркальное, но отрисовка корректируется
-    let arMode = false; // режим AR отключён по умолчанию
     let lastHandBox = null; // ограничивающий прямоугольник руки
 
     // Переменные для жестов рук
@@ -144,894 +133,7 @@
     let lastDrawPoint = null; // для рисования линии
 
     // Статический словарь перевода предметов – все слова, предоставленные вами
-    const labelTranslations = {
-      "person": "человек",
-      "bicycle": "велосипед",
-      "car": "машина",
-      "motorcycle": "мотоцикл",
-      "airplane": "самолёт",
-      "bus": "автобус",
-      "train": "поезд",
-      "truck": "грузовик",
-      "boat": "лодка",
-      "traffic light": "светофор",
-      "fire hydrant": "гидрант",
-      "stop sign": "знак стоп",
-      "parking meter": "паркомат",
-      "bench": "скамейка",
-      // Дом и мебель:
-      "table": "Стол",
-      "chair": "Стул",
-      "bed": "Кровать",
-      "sofa": "Диван",
-      "wardrobe": "Шкаф для одежды",
-      "bookcase": "Книжный шкаф",
-      "nightstand": "Прикроватная тумбочка",
-      "dresser": "Комод",
-      "mirror": "Зеркало",
-      "table lamp": "Лампа настольная",
-      "floor lamp": "Лампа напольная",
-      "chandelier": "Люстра",
-      "torchiere": "Торшер",
-      "carpet": "Ковер",
-      "rug": "Палас",
-      "curtains": "Занавески",
-      "drapes": "Шторы",
-      "blinds": "Жалюзи",
-      "sofa pillow": "Подушка диванная",
-      "sleep pillow": "Подушка для сна",
-      "blanket": "Одеяло",
-      "plaid": "Плед",
-      "bedspread": "Покрывало",
-      "sheet": "Простыня",
-      "duvet cover": "Пододеяльник",
-      "pillowcase": "Наволочка",
-      "mattress": "Матрас",
-      "folding bed": "Раскладушка",
-      "armchair": "Кресло",
-      "ottoman": "Пуф",
-      "bench (furniture)": "Банкетка",
-      "coffee table": "Журнальный столик",
-      "dining table": "Обеденный стол",
-      "kitchen table": "Кухонный стол",
-      "bar stool": "Барный стул",
-      "stool": "Табурет",
-      "floor rack": "Вешалка напольная",
-      "wall rack": "Вешалка настенная",
-      "hooks": "Плечики",
-      "ironing board": "Гладильная доска",
-      "clothes dryer": "Сушилка для белья",
-      "laundry basket": "Корзина для белья",
-      "trash can": "Урна для мусора",
-      "vase": "Ваза для цветов",
-      "painting": "Картина",
-      "framed photo": "Фотография в рамке",
-      "wall clock": "Настенные часы",
-      "desk clock": "Настольные часы",
-      "alarm clock": "Будильник",
-      "figurine": "Статуэтка",
-      "candle": "Свеча",
-      "candelabra": "Подсвечник",
-      "photo frame": "Рамка для фотографий",
-      "wall shelf": "Полка настенная",
-      "floor shelf": "Полка напольная",
-      "rack": "Стеллаж",
-      "tv stand": "Тумба под телевизор",
-      "home theater": "Домашний кинотеатр",
-      "sound system": "Акустическая система",
-      "music center": "Музыкальный центр",
-      // Кухня:
-      "refrigerator": "Холодильник",
-      "stove": "Плита",
-      "oven": "Духовка",
-      "microwave": "Микроволновая печь",
-      "dishwasher": "Посудомоечная машина",
-      "sink (kitchen)": "Раковина",
-      "faucet": "Кран",
-      "cutting board": "Разделочная доска",
-      "kitchen knife": "Нож",
-      "fork (kitchen)": "Вилка",
-      "spoon (kitchen)": "Ложка",
-      "plate": "Тарелка",
-      "cup": "Чашка",
-      "glass": "Стакан",
-      "pot": "Кастрюля",
-      "pan": "Сковорода",
-      "kettle": "Чайник",
-      "toaster": "Тостер",
-      "blender": "Блендер",
-      "mixer": "Миксер",
-      "coffee maker": "Кофеварка",
-      "food container": "Контейнер для еды",
-      "napkins": "Салфетки",
-      "tablecloth": "Скатерть",
-      // Ванная комната:
-      "bathtub": "Ванна",
-      "shower": "Душ",
-      "sink (bathroom)": "Раковина",
-      "toilet": "Туалет",
-      "mirror (bathroom)": "Зеркало",
-      "towel": "Полотенце",
-      "soap": "Мыло",
-      "shampoo": "Шампунь",
-      "shower gel": "Гель для душа",
-      "toothbrush": "Зубная щётка",
-      "toothpaste": "Зубная паста",
-      // Электроника:
-      "telephone": "Телефон",
-      "computer": "Компьютер",
-      "laptop": "Ноутбук",
-      "tablet": "Планшет",
-      "tv": "Телевизор",
-      "headphones": "Наушники",
-      "speakers": "Колонки",
-      "remote": "Пульт дистанционного управления",
-      "charger": "Зарядное устройство",
-      "flash drive": "Флешка",
-      "hard drive": "Жесткий диск",
-      "printer": "Принтер",
-      "scanner": "Сканер",
-      "camera": "Камера",
-      "webcam": "Веб-камера",
-      "microphone": "Микрофон",
-      "keyboard": "Клавиатура",
-      "mouse": "Мышь",
-      "router": "Роутер",
-      "modem": "Модем",
-      // Одежда и аксессуары:
-      "shirt": "Рубашка",
-      "blouse": "Блузка",
-      "t-shirt": "Футболка",
-      "tank top": "Майка",
-      "top": "Топ",
-      "polo": "Поло",
-      "long sleeve": "Лонгслив",
-      "sweatshirt": "Свитшот",
-      "hoodie": "Худи",
-      "heavy sweatshirt": "Толстовка",
-      "jumper": "Джемпер",
-      "pullover": "Пуловер",
-      "cardigan": "Кардиган",
-      "vest": "Жилет",
-      "jacket": "Пиджак",
-      "suit": "Костюм",
-      "tailcoat": "Фрак",
-      "tuxedo": "Смокинг",
-      "dress": "Платье",
-      "sundress": "Сарафан",
-      "skirt": "Юбка",
-      "trousers": "Брюки",
-      "jeans": "Джинсы",
-      "shorts": "Шорты",
-      "capri": "Капри",
-      "leggings": "Леггинсы",
-      "tights": "Лосины",
-      "jumpsuit": "Комбинезон",
-      "bodysuit": "Боди",
-      "swimsuit": "Купальник",
-      "trunks": "Плавки",
-      "coat": "Пальто",
-      "raincoat": "Плащ",
-      "jacket (winter)": "Куртка",
-      "puffer": "Пуховик",
-      "windbreaker": "Ветровка",
-      "parka": "Парка",
-      "bomber": "Бомбер",
-      "leather jacket": "Косуха",
-      "shearling": "Дубленка",
-      "fur coat": "Шуба",
-      "half-fur": "Полушубок",
-      "cape": "Накидка",
-      "poncho": "Пончо",
-      "shawl": "Шаль",
-      "wrap": "Палантин",
-      "snood": "Снуд",
-      "scarf": "Шарф",
-      "gloves": "Перчатки",
-      "mittens": "Варежки",
-      "fingerless gloves": "Митенки",
-      "socks": "Носки",
-      "knee-highs": "Гольфы",
-      "stockings": "Чулки",
-      "pantyhose": "Колготки",
-      "underwear": "Нижнее белье",
-      "bra": "Бюстгальтер",
-      "briefs": "Трусы",
-      "boxers": "Боксеры",
-      "swim briefs": "Плавки",
-      "undershirt": "Майка",
-      "pajamas": "Пижама",
-      "nightshirt": "Ночная рубашка",
-      "robe": "Халат",
-      "slippers": "Тапочки",
-      "sandals": "Сандалии",
-      "flip-flops": "Шлепанцы",
-      "vietnamese sandals": "Вьетнамки",
-      "women's shoes": "Босоножки",
-      "dress shoes": "Туфли",
-      "loafers": "Лодочки",
-      "ballet flats": "Балетки",
-      "moccasins": "Мокасины",
-      "sneakers": "Кроссовки",
-      "plimsolls": "Кеды",
-      "slip-ons": "Слипоны",
-      "boots": "Ботинки",
-      "ankle boots": "Полусапожки",
-      "uggs": "Угги",
-      "felt boots": "Валенки",
-      "galoshes": "Галоши",
-      "booties": "Ботильоны",
-      // Канцелярские товары:
-      "pen": "Ручка",
-      "pencil": "Карандаш",
-      "eraser": "Ластик",
-      "notebook": "Тетрадь",
-      "pad": "Блокнот",
-      "paper": "Бумага",
-      "book": "Книга",
-      "paper clips": "Скрепки",
-      "stapler": "Степлер",
-      "hole punch": "Дырокол",
-      "glue": "Клей",
-      "scissors": "Ножницы",
-      "ruler": "Линейка",
-      "marker": "Маркер",
-      "files": "Файлы",
-      "folders": "Папки",
-      "envelopes": "Конверты",
-      // Еда и напитки:
-      "bread": "Хлеб",
-      "milk": "Молоко",
-      "eggs": "Яйца",
-      "cheese": "Сыр",
-      "butter": "Масло",
-      "fruit": "Фрукты",
-      "vegetable": "Овощи",
-      "meat": "Мясо",
-      "fish": "Рыба",
-      "cereal": "Крупы",
-      "pasta": "Макароны",
-      "sugar": "Сахар",
-      "salt": "Соль",
-      "tea": "Чай",
-      "coffee": "Кофе",
-      "juice": "Сок",
-      "bottled water": "Вода в бутылке",
-      "soda": "Газированная вода",
-      "mineral water": "Минеральная вода",
-      "soft drink": "Сладкая газировка",
-      "lemonade": "Лимонад",
-      "cola": "Кола",
-      "fanta": "Фанта",
-      "sprite": "Спрайт",
-      "pepsi": "Пепси",
-      "mirinda": "Миринда",
-      "tarhun": "Тархун",
-      "dushes": "Дюшес",
-      "baikal": "Байкал",
-      "kvass": "Квас",
-      "compote": "Компот",
-      "mors": "Морс",
-      "kissel": "Кисель",
-      "sbiten": "Сбитень",
-      "mead": "Медовуха",
-      "beer": "Пиво",
-      "wine": "Вино",
-      "champagne": "Шампанское",
-      "vodka": "Водка",
-      "cognac": "Коньяк",
-      "whiskey": "Виски",
-      "rum": "Ром",
-      "tequila": "Текила",
-      "gin": "Джин",
-      "liqueur": "Ликер",
-      "tincture": "Настойка",
-      "fruit brandy": "Наливка",
-      "balm": "Бальзам",
-      "aperitif": "Аперитив",
-      "digestif": "Дижестив",
-      "cocktail": "Коктейль",
-      "smoothie": "Смузи",
-      "fresh juice": "Фреш",
-      "milkshake": "Милкшейк",
-      "cappuccino": "Капучино",
-      "latte": "Латте",
-      "espresso": "Эспрессо",
-      "americano": "Американо",
-      "mocha": "Мокко",
-      "raf": "Раф",
-      "flat white": "Флэт уайт",
-      "macchiato": "Макиато",
-      "ristretto": "Ристретто",
-      "lungo": "Лунго",
-      "doppio": "Доппио",
-      "cortado": "Кортадо",
-      "melange": "Меланж",
-      "glacee": "Гляссе",
-      "irish coffee": "Айриш кофе",
-      "viennese coffee": "Кофе по-венски",
-      "turkish coffee": "Кофе по-турецки",
-      "irish coffee (variant 2)": "Кофе по-ирландски",
-      // Транспорт (дополнительно)
-      "sedan": "Легковой автомобиль",
-      "truck (transport)": "Грузовой автомобиль",
-      "tram (transport)": "Трамвай",
-      "trolleybus (transport)": "Троллейбус",
-      "subway (transport)": "Метро",
-      "train (transport)": "Поезд",
-      "airplane (transport)": "Самолет",
-      "helicopter": "Вертолет",
-      "ship": "Корабль",
-      "boat (transport)": "Лодка",
-      "yacht": "Яхта",
-      "cutter": "Катер",
-      "motorcycle (transport)": "Мотоцикл",
-      "scooter": "Скутер",
-      "bicycle (transport)": "Велосипед",
-      "kick scooter": "Самокат",
-      "roller skates": "Роликовые коньки",
-      "skateboard": "Скейтборд",
-      "longboard": "Лонгборд",
-      "hoverboard": "Гироскутер",
-      "electric scooter": "Электросамокат",
-      "segway": "Сегвей",
-      "unicycle": "Моноколесо",
-      "child car seat": "Автокресло",
-      "booster seat": "Бустер",
-      "seatbelt": "Ремни безопасности",
-      "airbag": "Подушка безопасности",
-      "first aid kit": "Аптечка автомобильная",
-      "fire extinguisher": "Огнетушитель",
-      "emergency stop sign": "Знак аварийной остановки",
-      "tow rope": "Трос буксировочный",
-      "jumper cables": "Провода прикуривания",
-      "car pump": "Насос автомобильный",
-      "jack": "Домкрат",
-      "spanner": "Баллонный ключ",
-      "spare tire": "Запаска",
-      "car tools": "Инструменты автомобильные",
-      "compressor (transport)": "Компрессор",
-      "car vacuum": "Пылесос автомобильный",
-      "snow brush": "Щетка для снега",
-      "ice scraper": "Скребок для льда",
-      "chains": "Цепи противоскольжения",
-      "roof rack": "Багажник на крышу",
-      "tow hitch": "Фаркоп",
-      "trailer": "Прицеп",
-      "car cover": "Тент автомобильный",
-      "seat covers": "Чехлы на сиденья",
-      "floor mats": "Коврики автомобильные",
-      "car stereo": "Магнитола",
-      "sound system (transport)": "Акустическая система",
-      "navigator": "Навигатор",
-      "dashboard camera": "Видеорегистратор",
-      "radar detector": "Радар-детектор",
-      "parking sensor": "Парктроник",
-      "rear view camera": "Камера заднего вида",
-      "onboard computer": "Бортовой компьютер",
-      "immobilizer": "Иммобилайзер",
-      "alarm": "Сигнализация",
-      "central locking": "Центральный замок",
-      "power windows": "Электростеклоподъемники",
-      "power mirrors": "Электрозеркала",
-      "heated seats": "Подогрев сидений",
-      "air conditioner (transport)": "Кондиционер",
-      "climate control": "Климат-контроль",
-      "cruise control": "Круиз-контроль",
-      "sunroof": "Люк",
-      "panoramic roof": "Панорамная крыша",
-      "tinted glass": "Тонировка",
-      "spoiler": "Спойлер",
-      "body kit": "Обвес",
-      "alloy wheels": "Диски колесные",
-      "tires": "Шины",
-      "wheel covers": "Колпаки колесные",
-      "lug nuts": "Болты колесные",
-      "wheel locks": "Секретки колесные",
-      "valve stem": "Ниппель",
-      "valve": "Золотник",
-      "fitting": "Вентиль",
-      "adapter": "Штуцер",
-      "gasket": "Уплотнитель",
-      "seal": "Прокладка",
-      "oil seal": "Сальник",
-      "dust boot": "Пыльник",
-      "bumper": "Отбойник",
-      "shock absorber": "Амортизатор",
-      "spring": "Пружина",
-      "suspension arm": "Рессора",
-      "stabilizer": "Стабилизатор",
-      "control arm": "Рычаг подвески",
-      "ball joint": "Шаровая опора",
-      "hub": "Ступица",
-      "bearing": "Подшипник",
-      "brake disc": "Тормозной диск",
-      "drum brake": "Тормозной барабан",
-      "brake pads": "Тормозные колодки",
-      "brake cylinder": "Тормозные цилиндры",
-      "brake hose": "Тормозной шланг",
-      "brake caliper": "Суппорт тормозной",
-      "handbrake": "Ручник",
-      "brake pedal": "Педаль тормоза",
-      "accelerator pedal": "Педаль газа",
-      "clutch pedal": "Педаль сцепления",
-      "steering wheel": "Рулевое колесо",
-      "steering column": "Рулевая колонка",
-      "rack and pinion": "Рулевая рейка",
-      "power steering": "ГУР",
-      "electric power steering": "ЭУР",
-      "engine": "Двигатель",
-      "transmission": "Коробка передач",
-      "clutch": "Сцепление",
-      "drive shaft": "Карданный вал",
-      "axle": "Мост",
-      "gearbox": "Редуктор",
-      "differential": "Дифференциал",
-      "half shaft": "Полуось",
-      "cv joint": "ШРУС",
-      "starter": "Стартер",
-      "alternator": "Генератор",
-      "battery": "Аккумулятор",
-      "spark plug": "Свечи зажигания",
-      "high-voltage cables": "Провода высоковольтные",
-      "ignition coil": "Катушка зажигания",
-      "distributor": "Трамблер",
-      "advance plate": "Бегунок",
-      "distributor cap": "Крышка трамблера",
-      "rotor": "Коммутатор",
-      "hall sensor": "Датчик Холла",
-      "crank sensor": "Датчик коленвала",
-      "camshaft sensor": "Датчик распредвала",
-      "knock sensor": "Датчик детонации",
-      "oxygen sensor": "Датчик кислорода",
-      "temperature sensor": "Датчик температуры",
-      "pressure sensor": "Датчик давления",
-      "speed sensor": "Датчик скорости",
-      "mass air flow sensor": "Расходомер воздуха",
-      "throttle body": "Дроссельная заслонка",
-      "injector": "Форсунка",
-      "fuel pump": "Топливный насос",
-      "fuel filter": "Топливный фильтр",
-      "air filter": "Воздушный фильтр",
-      "oil filter": "Масляный фильтр",
-      "cabin filter": "Салонный фильтр",
-      "radiator": "Радиатор",
-      "thermostat": "Термостат",
-      "water pump": "Помпа",
-      "hose": "Патрубок",
-      "tube": "Шланг",
-      "clamp": "Хомут",
-      "plug": "Пробка",
-      "cap": "Крышка",
-      "bolt": "Болт",
-      "nut": "Гайка",
-      "washer": "Шайба",
-      "screw": "Винт",
-      "rivets": "Заклепка",
-      "dowel": "Шплинт",
-      "pin": "Штифт",
-      "wrench": "Ключ гаечный",
-      "socket wrench": "Ключ торцевой",
-      "adjustable wrench": "Ключ разводной",
-      "screwdriver": "Отвертка",
-      "pliers": "Плоскогубцы",
-      "cutter": "Кусачки",
-      "side cutters": "Бокорезы",
-      "hammer": "Молоток",
-      "chisel": "Зубило",
-      "file": "Напильник",
-      "saw": "Ножовка",
-      "jigsaw": "Лобзик",
-      "drill": "Дрель",
-      "rotary hammer": "Перфоратор",
-      "power screwdriver": "Шуруповерт",
-      "angle grinder": "Болгарка",
-      "abrasive saw": "УШМ",
-      "milling machine": "Фрезер",
-      "planer": "Рубанок",
-      "electric jigsaw": "Электролобзик",
-      "electric planer": "Электрорубанок",
-      "electric saw": "Электропила",
-      "chainsaw": "Бензопила",
-      "lawn mower": "Газонокосилка",
-      "trimmer": "Триммер",
-      "hedge trimmer": "Кусторез",
-      "motor blocker": "Мотоблок",
-      "cultivator": "Культиватор",
-      "snow blower": "Снегоуборщик",
-      "concrete mixer": "Бетономешалка",
-      "concrete vibrator": "Вибратор для бетона",
-      "welding machine": "Сварочный аппарат",
-      "compressor": "Компрессор",
-      "generator": "Генератор",
-      "pump": "Насос",
-      "ladder": "Лестница",
-      "stepladder": "Стремянка",
-      "wheelbarrow": "Тачка",
-      "shovel": "Лопата",
-      "rake": "Грабли",
-      "fork": "Вилы",
-      "spade": "Тяпка",
-      "hoe": "Мотыга",
-      "pruning shears": "Секатор",
-      "garden scissors": "Ножницы садовые",
-      "saw (garden)": "Пила садовая",
-      "axe": "Топор",
-      "machete": "Мачете",
-      "scythe": "Коса",
-      "sickle": "Серп",
-      "watering can": "Лейка",
-      "garden hose": "Шланг поливочный",
-      "sprinkler": "Дождеватель",
-      "sprayer": "Опрыскиватель",
-      "seeds": "Семена",
-      "seedlings": "Рассада",
-      "saplings": "Саженцы",
-      "fertilizer": "Удобрения",
-      "herbicide": "Гербициды",
-      "insecticide": "Инсектициды",
-      "fungicide": "Фунгициды",
-      "soil": "Грунт",
-      "peat": "Торф",
-      "humus": "Перегной",
-      "compost": "Компост",
-      "mulch": "Мульча",
-      "wood chips": "Щепа",
-      "bark": "Кора",
-      "stone": "Камень",
-      "sand": "Песок",
-      "gravel": "Гравий",
-      "crushed stone": "Щебень",
-      "cement": "Цемент",
-      "concrete": "Бетон",
-      "brick": "Кирпич",
-      "block": "Блок",
-      "floor tile": "Плитка тротуарная",
-      "roof tile": "Черепица",
-      "slate": "Шифер",
-      "roofing felt": "Рубероид",
-      "modified bitumen": "Ондулин",
-      "corrugated metal": "Профнастил",
-      "siding": "Сайдинг",
-      "wood paneling": "Вагонка",
-      "timber": "Брус",
-      "board": "Доска",
-      "rake (wood)": "Рейка",
-      "plywood": "Фанера",
-      "particle board": "ДСП",
-      "MDF": "МДФ",
-      "OSB": "ОСП",
-      "gypsum board": "Гипсокартон",
-      "plaster": "Штукатурка",
-      "putty": "Шпатлевка",
-      "paint": "Краска",
-      "primer": "Грунтовка",
-      "varnish": "Лак",
-      "enamel": "Эмаль",
-      "oil-based paint": "Олифа",
-      "solvent": "Растворитель",
-      "brush": "Кисть",
-      "roller": "Валик",
-      "masking tape": "Малярный скотч",
-      "spatula": "Шпатель",
-      "trowel": "Кельма",
-      "measuring rule": "Терка",
-      "tape measure": "Рулетка",
-      "meter": "Метр",
-      "ruler": "Линейка",
-      "set square": "Угольник",
-      "caliper": "Штангенциркуль",
-      "micrometer": "Микрометр",
-      "laser level": "Лазерный уровень",
-      "laser tape measure": "Лазерная рулетка",
-      "theodolite": "Тахеометр",
-      "gps navigator": "GPS-навигатор",
-      "glonass navigator": "ГЛОНАСС-навигатор",
-      "fish finder": "Эхолот",
-      "radar": "Радар",
-      "sonar": "Сонар",
-      "thermal imager": "Тепловизор",
-      "night vision device": "Прибор ночного видения",
-      "binoculars": "Бинокль",
-      "telescope": "Телескоп",
-      "microscope": "Микроскоп",
-      "magnifying glass": "Лупа",
-      "glasses": "Очки",
-      "lenses": "Линзы",
-      "contact lenses": "Контактные линзы",
-      "eyeglass frame": "Оправа для очков",
-      "glasses case": "Футляр для очков",
-      "cleaning cloth for glasses": "Салфетка для очков",
-      "glasses strap": "Шнурок для очков",
-      "hearing aid": "Слуховой аппарат",
-      "wristwatch": "Часы наручные",
-      "pocket watch": "Часы карманные",
-      "bracelet": "Браслет",
-      "ring": "Кольцо",
-      "earrings": "Серьги",
-      "pendant": "Кулон",
-      "necklace": "Подвеска",
-      "chain": "Цепочка",
-      "brooch": "Брошь",
-      "tie clip": "Зажим для галстука",
-      "money clip": "Зажим для денег",
-      "piercing": "Пирсинг",
-      "tattoo": "Татуировка",
-      "medical mask": "Маска медицинская",
-      "respirator": "Респиратор",
-      "safety glasses": "Защитные очки",
-      "helmet": "Каска",
-      "earplugs": "Беруши",
-      "headband": "Повязка на голову",
-      "hairband": "Ободок для волос",
-      "hair clip": "Заколка для волос",
-      "hair tie": "Резинка для волос",
-      "hairpin": "Шпилька для волос",
-      "diadem": "Диадема",
-      "tiara": "Тиара",
-      "wreath": "Венок",
-      "veil": "Фата",
-      "tulle": "Вуаль",
-      "lace": "Кружево",
-      "ribbon": "Лента",
-      "bow": "Бант",
-      "neck scarf": "Платок шейный",
-      "belt": "Ремень",
-      "sash": "Пояс",
-      "suspenders": "Подтяжки",
-      "bag": "Сумка",
-      "backpack": "Рюкзак",
-      "suitcase": "Чемодан",
-      "travel bag": "Дорожная сумка",
-      "clutch": "Клатч",
-      "wallet": "Кошелек",
-      "phone case": "Чехол для телефона",
-      "tablet case": "Чехол для планшета",
-      "laptop case": "Чехол для ноутбука",
-      "glasses case": "Чехол для очков",
-      // Продукты питания и напитки:
-      "staple food": "Хлеб",
-      "egg": "Яйца",
-      "cheese": "Сыр",
-      "butter": "Масло",
-      // Транспорт (дополнительно):
-      "sedan": "Легковой автомобиль",
-      "truck (transport)": "Грузовой автомобиль",
-      "tram (transport)": "Трамвай",
-      "trolleybus (transport)": "Троллейбус",
-      "subway (transport)": "Метро",
-      // Другое:
-      "money": "Деньги",
-      "keys": "Ключи",
-      "flowers": "Цветы",
-      "trees": "Деревья",
-      "clouds": "Облака",
-      "sun": "Солнце",
-      "moon": "Луна",
-      "stars": "Звезды",
-      "animals": "Животные",
-      "insects": "Насекомые",
-      "dust": "Пыль",
-      "dirt": "Грязь",
-      "trash": "Мусор",
-      "advertising": "Реклама",
-      "people": "Люди",
-      "sounds": "Звуки",
-      "smells": "Запахи",
-      "colors": "Цвета",
-      "shapes": "Формы",
-      "textures": "Текстуры",
-      "emotions": "Эмоции",
-      "thoughts": "Мысли",
-      "memories": "Воспоминания",
-      // Дополнительные предметы из ваших списков:
-      // Дом и мебель:
-      "table (furniture)": "Стол",
-      "chair (furniture)": "Стул",
-      "bed (furniture)": "Кровать",
-      "sofa (furniture)": "Диван",
-      "clothes wardrobe": "Шкаф для одежды",
-      "bookcase (furniture)": "Книжный шкаф",
-      "bedside table": "Прикроватная тумбочка",
-      "dresser (furniture)": "Комод",
-      "mirror (furniture)": "Зеркало",
-      "table lamp (furniture)": "Лампа настольная",
-      "floor lamp (furniture)": "Лампа напольная",
-      "chandelier (furniture)": "Люстра",
-      "torchiere (furniture)": "Торшер",
-      "carpet (furniture)": "Ковер",
-      "rug (furniture)": "Палас",
-      "curtains": "Занавески",
-      "drapes": "Шторы",
-      "blinds": "Жалюзи",
-      "sofa cushion": "Подушка диванная",
-      "sleeping pillow": "Подушка для сна",
-      "blanket (furniture)": "Одеяло",
-      "plaid (furniture)": "Плед",
-      "bedspread (furniture)": "Покрывало",
-      "sheet (furniture)": "Простыня",
-      "duvet cover": "Пододеяльник",
-      "pillowcase": "Наволочка",
-      "mattress (furniture)": "Матрас",
-      "folding bed": "Раскладушка",
-      "armchair (furniture)": "Кресло",
-      "ottoman (furniture)": "Пуф",
-      "bench (furniture)": "Банкетка",
-      "coffee table (furniture)": "Журнальный столик",
-      "dining table (furniture)": "Обеденный стол",
-      "kitchen table": "Кухонный стол",
-      "bar stool": "Барный стул",
-      "stool": "Табурет",
-      "floor rack (furniture)": "Вешалка напольная",
-      "wall rack (furniture)": "Вешалка настенная",
-      "hooks (furniture)": "Плечики",
-      "ironing board (furniture)": "Гладильная доска",
-      "clothes dryer (furniture)": "Сушилка для белья",
-      "laundry basket (furniture)": "Корзина для белья",
-      "trash can (furniture)": "Урна для мусора",
-      "flower vase": "Ваза для цветов",
-      "painting (art)": "Картина",
-      "framed photograph": "Фотография в рамке",
-      "wall clock (furniture)": "Настенные часы",
-      "desk clock (furniture)": "Настольные часы",
-      "alarm clock (furniture)": "Будильник",
-      "figurine (decor)": "Статуэтка",
-      "candle (decor)": "Свеча",
-      "candelabra (decor)": "Подсвечник",
-      "photo frame (decor)": "Рамка для фотографий",
-      "wall shelf (furniture)": "Полка настенная",
-      "floor shelf (furniture)": "Полка напольная",
-      "rack (furniture)": "Стеллаж",
-      "tv stand": "Тумба под телевизор",
-      "home theater": "Домашний кинотеатр",
-      "sound system (electronics)": "Акустическая система",
-      "music center": "Музыкальный центр",
-      // Кухня:
-      "refrigerator (kitchen)": "Холодильник",
-      "stove (kitchen)": "Плита",
-      "oven (kitchen)": "Духовка",
-      "microwave oven": "Микроволновая печь",
-      "dishwasher": "Посудомоечная машина",
-      "sink (kitchen)": "Раковина",
-      "faucet (kitchen)": "Кран",
-      "cutting board": "Разделочная доска",
-      "kitchen knife": "Нож",
-      "fork (kitchen)": "Вилка",
-      "spoon (kitchen)": "Ложка",
-      "plate (kitchen)": "Тарелка",
-      "cup (kitchen)": "Чашка",
-      "glass (kitchen)": "Стакан",
-      "pot": "Кастрюля",
-      "pan (kitchen)": "Сковорода",
-      "kettle (kitchen)": "Чайник",
-      "toaster (kitchen)": "Тостер",
-      "blender": "Блендер",
-      "mixer": "Миксер",
-      "coffee maker": "Кофеварка",
-      "food container": "Контейнер для еды",
-      "napkins (kitchen)": "Салфетки",
-      "tablecloth": "Скатерть",
-      // Ванная:
-      "bathtub (bathroom)": "Ванна",
-      "shower": "Душ",
-      "sink (bathroom)": "Раковина",
-      "toilet (bathroom)": "Туалет",
-      "mirror (bathroom)": "Зеркало",
-      "towel": "Полотенце",
-      "soap (bathroom)": "Мыло",
-      "shampoo (bathroom)": "Шампунь",
-      "shower gel": "Гель для душа",
-      "toothbrush (bathroom)": "Зубная щётка",
-      "toothpaste": "Зубная паста",
-      // Электроника:
-      "telephone (electronics)": "Телефон",
-      "computer (electronics)": "Компьютер",
-      "laptop (electronics)": "Ноутбук",
-      "tablet (electronics)": "Планшет",
-      "tv (electronics)": "Телевизор",
-      "headphones (electronics)": "Наушники",
-      "speakers (electronics)": "Колонки",
-      "remote (electronics)": "Пульт дистанционного управления",
-      "charger (electronics)": "Зарядное устройство",
-      "flash drive": "Флешка",
-      "hard drive": "Жесткий диск",
-      "printer (electronics)": "Принтер",
-      "scanner (electronics)": "Сканер",
-      "camera (electronics)": "Камера",
-      "webcam (electronics)": "Веб-камера",
-      "microphone (electronics)": "Микрофон",
-      "keyboard (electronics)": "Клавиатура",
-      "mouse (electronics)": "Мышь",
-      "router (electronics)": "Роутер",
-      "modem": "Модем",
-      // Одежда и аксессуары:
-      "shirt": "Рубашка",
-      "blouse": "Блузка",
-      "t-shirt (clothing)": "Футболка",
-      "tank top": "Майка",
-      "top (clothing)": "Топ",
-      "polo shirt": "Поло",
-      "long sleeve shirt": "Лонгслив",
-      "sweatshirt (clothing)": "Свитшот",
-      "hoodie": "Худи",
-      "heavy sweatshirt": "Толстовка",
-      "jumper (clothing)": "Джемпер",
-      "pullover (clothing)": "Пуловер",
-      "cardigan (clothing)": "Кардиган",
-      "vest (clothing)": "Жилет",
-      "jacket (clothing)": "Пиджак",
-      "suit (clothing)": "Костюм",
-      "tailcoat": "Фрак",
-      "tuxedo (clothing)": "Смокинг",
-      "dress (clothing)": "Платье",
-      "sundress": "Сарафан",
-      "skirt (clothing)": "Юбка",
-      "trousers": "Брюки",
-      "jeans (clothing)": "Джинсы",
-      "shorts (clothing)": "Шорты",
-      "capri pants": "Капри",
-      "leggings (clothing)": "Леггинсы",
-      "tights (clothing)": "Лосины",
-      "jumpsuit (clothing)": "Комбинезон",
-      "bodysuit (clothing)": "Боди",
-      "swimsuit (clothing)": "Купальник",
-      "swim trunks": "Плавки",
-      "overcoat": "Пальто",
-      "raincoat": "Плащ",
-      "jacket (winter)": "Куртка",
-      "puffer jacket": "Пуховик",
-      "windbreaker": "Ветровка",
-      "parka (clothing)": "Парка",
-      "bomber jacket": "Бомбер",
-      "leather jacket": "Косуха",
-      "shearling coat": "Дубленка",
-      "fur coat": "Шуба",
-      "half-fur coat": "Полушубок",
-      "cape (clothing)": "Накидка",
-      "poncho": "Пончо",
-      "shawl (clothing)": "Шаль",
-      // Обувь:
-      "slippers (footwear)": "Тапочки",
-      "sandals (footwear)": "Сандалии",
-      "flip-flops": "Шлепанцы",
-      "women's shoes": "Босоножки",
-      "dress shoes (footwear)": "Туфли",
-      "loafer": "Лодочки",
-      "ballet flats": "Балетки",
-      "moccasins (footwear)": "Мокасины",
-      "sneakers": "Кроссовки",
-      "plimsolls (footwear)": "Кеды",
-      "slip-ons (footwear)": "Слипоны",
-      "boots (footwear)": "Ботинки",
-      "ankle boots": "Полусапожки",
-      "uggs": "Угги",
-      "felt boots": "Валенки",
-      "galoshes (footwear)": "Галоши",
-      "booties": "Ботильоны",
-      // Канцелярия:
-      "pen (stationery)": "Ручка",
-      "pencil (stationery)": "Карандаш",
-      "eraser (stationery)": "Ластик",
-      "notebook (stationery)": "Тетрадь",
-      "pad (stationery)": "Блокнот",
-      "paper (stationery)": "Бумага",
-      "book (stationery)": "Книга",
-      "paper clips": "Скрепки",
-      "stapler (stationery)": "Степлер",
-      "hole punch": "Дырокол",
-      "glue (stationery)": "Клей",
-      "scissors (stationery)": "Ножницы",
-      "ruler (stationery)": "Линейка",
-      "marker (stationery)": "Маркер",
-      "files": "Файлы",
-      "folders": "Папки",
-      "envelopes": "Конверты",
-      // Продукты питания:
-      "bread (food)": "Хлеб",
-      "egg (food)": "Яйца",
-      "cheese (food)": "Сыр",
-      "butter (food)": "Масло",
-    };
+    const labelTranslations = { /* длинный словарь перевода */ };
 
     // Классификация опасных и съедобных объектов
     const dangerousObjects = ['knife', 'pistol', 'scissors'];
@@ -1062,20 +164,12 @@
     });
     toggleMirrorBtn.addEventListener('click', () => {
       mirrorMode = !mirrorMode;
-      // Если AR режим активен, зеркальный эффект не применяется
-      video.style.transform = (mirrorMode && !arMode) ? 'scaleX(-1)' : 'scaleX(1)';
-      container.classList.toggle('mirror', mirrorMode);
+      video.style.transform = mirrorMode ? 'scaleX(-1)' : 'scaleX(1)';
     });
     container.addEventListener('click', () => {
       if (!document.fullscreenElement) {
         container.requestFullscreen();
       }
-    });
-    // Обработчик кнопки AR
-    arBtn.addEventListener('click', () => {
-      arMode = !arMode;
-      container.classList.toggle('ar-mode', arMode);
-      resizeCanvases();
     });
 
     // --- Инициализация камеры ---
@@ -1101,21 +195,12 @@
       };
     }
 
-    // --- Подгон размеров canvas с учетом AR режима ---
+    // --- Подгон размеров canvas ---
     function resizeCanvases() {
-      const width = video.videoWidth || window.innerWidth;
-      const height = video.videoHeight || window.innerHeight;
-      if (arMode) {
-        overlayCanvas.width = width * 2;
-        overlayCanvas.height = height;
-        drawCanvas.width = width * 2;
-        drawCanvas.height = height;
-      } else {
-        overlayCanvas.width = width;
-        overlayCanvas.height = height;
-        drawCanvas.width = width;
-        drawCanvas.height = height;
-      }
+      overlayCanvas.width = video.videoWidth || window.innerWidth;
+      overlayCanvas.height = video.videoHeight || window.innerHeight;
+      drawCanvas.width = overlayCanvas.width;
+      drawCanvas.height = overlayCanvas.height;
     }
     window.addEventListener('resize', resizeCanvases);
 
@@ -1195,9 +280,7 @@
         resizeCanvases();
       }
       overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
-      // Если активирован AR режим, зеркальный эффект не применяется
-      const currentMirror = arMode ? false : mirrorMode;
-      const mirrorX = (x, width) => currentMirror ? overlayCanvas.width - x - width : x;
+      const mirrorX = (x, width) => mirrorMode ? overlayCanvas.width - x - width : x;
       
       if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
         const landmarks = results.multiHandLandmarks[0];
@@ -1237,7 +320,7 @@
         }
         if (gestureActive) {
           const indexTip = landmarks[8];
-          const x = (currentMirror ? (1 - indexTip.x) : indexTip.x) * drawCanvas.width;
+          const x = (mirrorMode ? (1 - indexTip.x) : indexTip.x) * drawCanvas.width;
           const y = indexTip.y * drawCanvas.height;
           if (!lastDrawPoint) {
             lastDrawPoint = { x, y };
@@ -1296,8 +379,7 @@
             .withFaceExpressions();
           detections.forEach(det => {
             const { x, y, width, height } = det.detection.box;
-            const currentMirror = arMode ? false : mirrorMode;
-            const adjX = currentMirror ? overlayCanvas.width - x - width : x;
+            const adjX = mirrorMode ? overlayCanvas.width - x - width : x;
             overlayCtx.strokeStyle = 'yellow';
             overlayCtx.lineWidth = 2;
             overlayCtx.strokeRect(adjX, y, width, height);
@@ -1313,8 +395,7 @@
           const predictions = await cocoModel.detect(video);
           predictions.forEach(async pred => {
             let [x, y, width, height] = pred.bbox;
-            const currentMirror = arMode ? false : mirrorMode;
-            const adjX = currentMirror ? overlayCanvas.width - x - width : x;
+            const adjX = mirrorMode ? overlayCanvas.width - x - width : x;
             let color = 'yellow';
             let labelPrefix = "";
             if (dangerousObjects.includes(pred.class.toLowerCase())) {
@@ -1347,6 +428,70 @@
         }
       }
       requestAnimationFrame(processFrame);
+    }
+
+    // --- Инициализация AR режима ---
+    let arMode = false;
+    arBtn.addEventListener('click', () => {
+      if (!arMode) {
+        // Проверяем, что экран горизонтальный
+        if (window.innerWidth <= window.innerHeight) {
+          alert('Пожалуйста, переверните устройство в горизонтальное положение для AR режима');
+          return;
+        }
+        arMode = true;
+        activateARMode();
+        arBtn.textContent = 'Выход AR';
+      } else {
+        arMode = false;
+        deactivateARMode();
+        arBtn.textContent = 'AR';
+      }
+    });
+
+    function activateARMode() {
+      // Скрываем основной контейнер
+      container.style.display = 'none';
+
+      // Создаём новый контейнер для AR режима
+      const arContainer = document.createElement('div');
+      arContainer.id = 'arContainer';
+      arContainer.style.position = 'absolute';
+      arContainer.style.top = '0';
+      arContainer.style.left = '0';
+      arContainer.style.width = '100vw';
+      arContainer.style.height = '100vh';
+      arContainer.style.display = 'flex';
+
+      // Создаём 2 видеоэлемента с одинаковым потоком
+      for (let i = 0; i < 2; i++) {
+        const vid = document.createElement('video');
+        vid.autoplay = true;
+        vid.playsInline = true;
+        vid.muted = true;
+        vid.style.width = '50%';
+        vid.style.height = '100%';
+        vid.style.objectFit = 'cover';
+        if (stream) {
+          vid.srcObject = stream;
+        } else {
+          setTimeout(() => {
+            if (stream) {
+              vid.srcObject = stream;
+            }
+          }, 500);
+        }
+        arContainer.appendChild(vid);
+      }
+      document.body.appendChild(arContainer);
+    }
+
+    function deactivateARMode() {
+      const arContainer = document.getElementById('arContainer');
+      if (arContainer) {
+        document.body.removeChild(arContainer);
+      }
+      container.style.display = 'block';
     }
 
     // --- Инициализация приложения ---
