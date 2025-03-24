@@ -18,19 +18,19 @@
       width: 100vw;
       height: 100vh;
       background: #000;
-      cursor: pointer;
     }
-    /* Видео остаётся зеркальным, если включён режим */
-    #video {
+    /* При обычном режиме */
+    #video, #overlay, #drawLayer {
       position: absolute;
       top: 0;
       left: 0;
       width: 100%;
       height: 100%;
       object-fit: cover;
+    }
+    #video {
       transform: scaleX(-1);
     }
-    /* Оверлеи НЕ имеют зеркального эффекта, чтобы подписи читались правильно */
     canvas {
       position: absolute;
       top: 0;
@@ -39,7 +39,6 @@
       height: 100%;
       object-fit: cover;
     }
-    /* Информационный блок */
     #controls {
       position: absolute;
       bottom: 10px;
@@ -59,10 +58,23 @@
     #controls button:hover {
       background: rgba(0,0,0,0.9);
     }
+    /* AR режим: контейнер делится на две части */
+    .arContainer {
+      display: flex;
+      flex-direction: row;
+      width: 100vw;
+      height: 100vh;
+    }
+    .arView {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+    }
   </style>
 </head>
 <body>
   <div id="container">
+    <!-- В обычном режиме – один вид -->
     <video id="video" autoplay playsinline muted></video>
     <canvas id="overlay"></canvas>
     <canvas id="drawLayer"></canvas>
@@ -70,7 +82,6 @@
       <button id="fullscreenBtn">Полный экран</button>
       <button id="switchCameraBtn">Переключить камеру</button>
       <button id="toggleMirrorBtn">Зеркало: Вкл/Выкл</button>
-      <!-- Кнопка AR добавлена -->
       <button id="arBtn">AR</button>
     </div>
   </div>
@@ -85,7 +96,7 @@
 
   <script>
     // Если хотите получать перевод онлайн, установите эту переменную в true.
-    const useOnlineTranslation = false; // По умолчанию используется статический словарь
+    const useOnlineTranslation = false;
 
     async function translateLabel(word) {
       try {
@@ -122,24 +133,22 @@
     // Глобальные переменные
     let currentFacingMode = "user"; // "user" или "environment"
     let stream = null;
-    let mirrorMode = true; // видео зеркальное, но отрисовка корректируется
-    let lastHandBox = null; // ограничивающий прямоугольник руки
+    let mirrorMode = true;
+    let lastHandBox = null;
+    let arMode = false;
+    let originalInnerHTML = container.innerHTML; // для возврата из AR режима
 
     // Переменные для жестов рук
     let fistCount = 0;
     let gestureActive = false;
     let lastFistState = false;
     let lastTimeFist = 0;
-    let lastDrawPoint = null; // для рисования линии
+    let lastDrawPoint = null;
 
-    // Статический словарь перевода предметов – все слова, предоставленные вами
-    const labelTranslations = { /* длинный словарь перевода */ };
-
-    // Классификация опасных и съедобных объектов
+    // Словари перевода, опасных и съедобных объектов, эмоций – оставлены без изменений
+    const labelTranslations = { /* ... ваш словарь ... */ };
     const dangerousObjects = ['knife', 'pistol', 'scissors'];
     const foodObjects = ['apple', 'banana', 'pizza', 'orange', 'sandwich'];
-
-    // Словарь перевода эмоций для настроения
     const emotionTranslations = {
       neutral: 'нейтральный',
       happy: 'счастлив',
@@ -166,13 +175,14 @@
       mirrorMode = !mirrorMode;
       video.style.transform = mirrorMode ? 'scaleX(-1)' : 'scaleX(1)';
     });
+    arBtn.addEventListener('click', toggleARMode);
     container.addEventListener('click', () => {
       if (!document.fullscreenElement) {
         container.requestFullscreen();
       }
     });
 
-    // --- Инициализация камеры ---
+    // --- Инициализация камеры (запрос разрешения) ---
     async function initCamera(facingMode = "user") {
       if (stream) {
         stream.getTracks().forEach(track => track.stop());
@@ -188,23 +198,28 @@
           audio: false
         });
       }
-      video.srcObject = stream;
-      video.onloadedmetadata = () => {
-        video.play();
-        resizeCanvases();
-      };
+      // Если не в AR режиме, назначаем поток основному видео
+      if (!arMode) {
+        video.srcObject = stream;
+        video.onloadedmetadata = () => {
+          video.play();
+          resizeCanvases();
+        };
+      }
     }
 
     // --- Подгон размеров canvas ---
     function resizeCanvases() {
-      overlayCanvas.width = video.videoWidth || window.innerWidth;
-      overlayCanvas.height = video.videoHeight || window.innerHeight;
-      drawCanvas.width = overlayCanvas.width;
-      drawCanvas.height = overlayCanvas.height;
+      if (!arMode) {
+        overlayCanvas.width = video.videoWidth || window.innerWidth;
+        overlayCanvas.height = video.videoHeight || window.innerHeight;
+        drawCanvas.width = overlayCanvas.width;
+        drawCanvas.height = overlayCanvas.height;
+      }
     }
     window.addEventListener('resize', resizeCanvases);
 
-    // --- Функции определения состояния пальцев ---
+    // --- Функции определения состояния пальцев (без изменений) ---
     function isFingerExtended(landmarks, pipIdx, tipIdx) {
       const pip = landmarks[pipIdx];
       const tip = landmarks[tipIdx];
@@ -430,68 +445,63 @@
       requestAnimationFrame(processFrame);
     }
 
-    // --- Инициализация AR режима ---
-    let arMode = false;
-    arBtn.addEventListener('click', () => {
+    // --- Функция переключения AR режима ---
+    function toggleARMode() {
       if (!arMode) {
-        // Проверяем, что экран горизонтальный
-        if (window.innerWidth <= window.innerHeight) {
-          alert('Пожалуйста, переверните устройство в горизонтальное положение для AR режима');
-          return;
-        }
         arMode = true;
-        activateARMode();
-        arBtn.textContent = 'Выход AR';
-      } else {
-        arMode = false;
-        deactivateARMode();
-        arBtn.textContent = 'AR';
-      }
-    });
+        // Сохраняем текущее содержимое контейнера для возврата
+        originalInnerHTML = container.innerHTML;
+        // Очищаем контейнер и создаём два равных блока
+        container.innerHTML = "";
+        container.classList.add("arContainer");
 
-    function activateARMode() {
-      // Скрываем основной контейнер
-      container.style.display = 'none';
-
-      // Создаём новый контейнер для AR режима
-      const arContainer = document.createElement('div');
-      arContainer.id = 'arContainer';
-      arContainer.style.position = 'absolute';
-      arContainer.style.top = '0';
-      arContainer.style.left = '0';
-      arContainer.style.width = '100vw';
-      arContainer.style.height = '100vh';
-      arContainer.style.display = 'flex';
-
-      // Создаём 2 видеоэлемента с одинаковым потоком
-      for (let i = 0; i < 2; i++) {
-        const vid = document.createElement('video');
-        vid.autoplay = true;
-        vid.playsInline = true;
-        vid.muted = true;
-        vid.style.width = '50%';
-        vid.style.height = '100%';
-        vid.style.objectFit = 'cover';
-        if (stream) {
+        // Функция создания одного вида (левый/правый)
+        function createArView(idPrefix) {
+          const view = document.createElement("div");
+          view.className = "arView";
+          const vid = document.createElement("video");
+          vid.id = idPrefix + "Video";
+          vid.autoplay = true;
+          vid.playsInline = true;
+          vid.muted = true;
+          vid.style.width = "100%";
+          vid.style.height = "100%";
+          vid.style.objectFit = "cover";
+          // Применяем зеркальное отображение, если включено
+          vid.style.transform = mirrorMode ? 'scaleX(-1)' : 'scaleX(1)';
           vid.srcObject = stream;
-        } else {
-          setTimeout(() => {
-            if (stream) {
-              vid.srcObject = stream;
-            }
-          }, 500);
+          view.appendChild(vid);
+          // Можно добавить канвас для оверлея, если требуется (без функционала распознавания)
+          const cv = document.createElement("canvas");
+          cv.id = idPrefix + "Overlay";
+          cv.style.position = "absolute";
+          cv.style.top = "0";
+          cv.style.left = "0";
+          cv.style.width = "100%";
+          cv.style.height = "100%";
+          view.appendChild(cv);
+          return view;
         }
-        arContainer.appendChild(vid);
-      }
-      document.body.appendChild(arContainer);
-    }
 
-    function deactivateARMode() {
-      const arContainer = document.getElementById('arContainer');
-      if (arContainer) {
-        document.body.removeChild(arContainer);
+        const leftView = createArView("left");
+        const rightView = createArView("right");
+        container.appendChild(leftView);
+        container.appendChild(rightView);
+        // Перемещаем блок управления (он остаётся работоспособным)
+        const controls = document.getElementById("controls");
+        container.appendChild(controls);
+      } else {
+        // Выход из AR режима: возвращаем оригинальное содержимое
+        arMode = false;
+        container.classList.remove("arContainer");
+        container.innerHTML = originalInnerHTML;
+        // Переинициализируем основной видеоэлемент с потоком
+        const mainVideo = document.getElementById("video");
+        if(mainVideo) {
+          mainVideo.srcObject = stream;
+          mainVideo.onloadedmetadata = () => { mainVideo.play(); resizeCanvases(); };
+        }
       }
-      container.style.display = 'block';
     }
 
     // --- Инициализация приложения ---
